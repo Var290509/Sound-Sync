@@ -28,7 +28,7 @@
   - HTML5 canvas audio visualizer with frequency bars and oscilloscope.
 - **👥 Created by VIK-V-VKS (sharp & rythamic)**:
   - Interactive creator hover tooltip easter egg in the sidebar:
-    - **V** — Vikash
+    - **V** — Vitesh
     - **I** — Ishitwa
     - **K** — Kowshik
     - **V** — Vardhan
@@ -138,7 +138,7 @@ git push -u origin main
 ## 📜 Authors & Credits
 
 Crafted by **VIK-V-VKS (sharp & rythamic)**:
-- **V** — Vikash *(System Architecture)*
+- **V** — Vitesh *(System Architecture)*
 - **I** — Ishitwa *(DSP Engineering)*
 - **K** — Kowshik *(Network Protocol)*
 - **V** — Vardhan *(Full-Stack Developer)*

@@ -6,7 +6,7 @@ export default function Sidebar({ isOpen, onClose, activeTab, onSelectTab }) {
   const { theme } = useTheme();
 
   // The 7 members specified in the user sketch:
-  // V - Vikash
+  // V - Vitesh
   // I - Ishitwa
   // K - Kowshik
   // V - Vardhan
@@ -14,7 +14,7 @@ export default function Sidebar({ isOpen, onClose, activeTab, onSelectTab }) {
   // K - Karthik
   // S - Srinidhi
   const authors = [
-    { letter: 'V', name: 'Vikash', role: 'Architect' },
+    { letter: 'V', name: 'Vitesh', role: 'Architect' },
     { letter: 'I', name: 'Ishitwa', role: 'DSP Engineer' },
     { letter: 'K', name: 'Kowshik', role: 'Network Lead' },
     { letter: '-', name: null, role: null },
