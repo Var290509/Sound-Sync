@@ -48,7 +48,8 @@ export default function HostView({ onSelectTab }) {
 
   // Fetch local LAN network IP for quick mobile connect
   useEffect(() => {
-    fetch('/api/network-info')
+    const apiBase = import.meta.env.VITE_SERVER_URL ? import.meta.env.VITE_SERVER_URL : '';
+    fetch(`${apiBase}/api/network-info`)
       .then((res) => res.json())
       .then((data) => {
         if (data.primaryIp) setNetworkIp(data.primaryIp);
