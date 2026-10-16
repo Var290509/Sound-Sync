@@ -2,8 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/logo.png" />
+    <!-- Google Favicon Standards -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/logo.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/logo.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/logo.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/logo.png" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="application-name" content="Sound Sync" />
+    <meta name="apple-mobile-web-app-title" content="Sound Sync" />
     <title>Sound Sync - Connect to your surroundings | WiFi Audio Relay</title>
     <meta name="description" content="Sound Sync allows you to stream crystal-clear audio from PC to phones, speakers, and devices over WiFi with ultra-low latency. Open-source AudioRelay alternative." />
     <meta name="keywords" content="Sound Sync, sound sync, sound sync wifi, audio relay, stream audio over wifi, low latency audio stream, pc to phone audio, wifi speaker" />
@@ -27,27 +35,37 @@
     <meta name="twitter:description" content="Stream live audio from your PC to mobile devices over local WiFi with zero latency." />
     <meta name="twitter:image" content="/logo.png" />
 
-    <!-- Structured Data (JSON-LD) for Google Search Engine Knowledge Graph -->
+    <!-- Structured Data (JSON-LD) for Google Search Site Name & WebApplication -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
-      "@type": "WebApplication",
-      "name": "Sound Sync",
-      "alternateName": ["sound sync", "SoundSync", "Sound Sync Audio Relay"],
-      "url": "https://sound-sync-vik-v-vks.vercel.app/",
-      "applicationCategory": "MultimediaApplication",
-      "operatingSystem": "Web, Windows, Android, iOS, macOS, Linux",
-      "description": "Low-latency wireless audio relay and real-time sound streaming over WebRTC.",
-      "featureList": "WiFi Audio Relay, Ultra Low Latency Streaming, Tab and Screen Audio Share, Microphone Broadcast, Multi-Device Sound Sync",
-      "offers": {
-        "@type": "Offer",
-        "price": "0",
-        "priceCurrency": "USD"
-      },
-      "creator": {
-        "@type": "Organization",
-        "name": "VIK-V-VKS"
-      }
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "name": "Sound Sync",
+          "alternateName": ["sound sync", "SoundSync"],
+          "url": "https://sound-sync-vik-v-vks.vercel.app/"
+        },
+        {
+          "@type": "WebApplication",
+          "name": "Sound Sync",
+          "alternateName": ["sound sync", "SoundSync", "Sound Sync Audio Relay"],
+          "url": "https://sound-sync-vik-v-vks.vercel.app/",
+          "applicationCategory": "MultimediaApplication",
+          "operatingSystem": "Web, Windows, Android, iOS, macOS, Linux",
+          "description": "Low-latency wireless audio relay and real-time sound streaming over WebRTC.",
+          "featureList": "WiFi Audio Relay, Ultra Low Latency Streaming, Tab and Screen Audio Share, Microphone Broadcast, Multi-Device Sound Sync",
+          "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD"
+          },
+          "creator": {
+            "@type": "Organization",
+            "name": "VIK-V-VKS"
+          }
+        }
+      ]
     }
     </script>
 
