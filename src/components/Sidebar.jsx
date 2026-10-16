@@ -70,9 +70,11 @@ export default function Sidebar({ isOpen, onClose, activeTab, onSelectTab }) {
         <div>
           <div className="flex items-center justify-between pb-6 border-b border-theme-border">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-theme-accent/15 border border-theme-accent/40 flex items-center justify-center text-theme-accent shadow-inner">
-                <Music className="w-5 h-5" />
-              </div>
+              <img
+                src="/logo.svg"
+                alt="Sound Sync"
+                className="w-10 h-10 rounded-2xl border border-theme-accent/40 shadow-sm object-cover"
+              />
               <div>
                 <h2 className="font-bold text-lg tracking-tight text-theme-text font-display">
                   Sound Sync

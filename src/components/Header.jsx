@@ -43,18 +43,25 @@ export default function Header({ onToggleSidebar, activeTab, onSelectTab, connec
             <Menu className="w-5 h-5" />
           </button>
 
-          <div className="cursor-pointer" onClick={() => onSelectTab('home')}>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl sm:text-2xl font-black tracking-tight font-display text-theme-text">
-                Sound Sync
-              </h1>
-              <span className="hidden sm:inline-block text-xs font-mono px-2 py-0.5 rounded-full border border-theme-accent/40 bg-theme-accent/10 text-theme-accent font-semibold">
-                v1.0 WiFi
-              </span>
+          <div className="flex items-center gap-3 cursor-pointer" onClick={() => onSelectTab('home')}>
+            <img
+              src="/logo.svg"
+              alt="Sound Sync Logo"
+              className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl shadow-[0_0_15px_var(--color-glow)] border border-theme-accent/40 object-cover"
+            />
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl sm:text-2xl font-black tracking-tight font-display text-theme-text">
+                  Sound Sync
+                </h1>
+                <span className="hidden sm:inline-block text-xs font-mono px-2 py-0.5 rounded-full border border-theme-accent/40 bg-theme-accent/10 text-theme-accent font-semibold">
+                  v1.0 WiFi
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm text-theme-muted font-medium tracking-wide">
+                — Connect to your surroundings
+              </p>
             </div>
-            <p className="text-xs sm:text-sm text-theme-muted font-medium tracking-wide">
-              — Connect to your surroundings
-            </p>
           </div>
         </div>
 
