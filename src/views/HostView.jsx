@@ -239,6 +239,17 @@ export default function HostView({ onSelectTab }) {
       {/* STATE 1: Initial Setup Form (Exact inputs from Sketch 2) */}
       {!isHosting ? (
         <div className="rounded-3xl bg-theme-surface border border-theme-border p-6 sm:p-10 shadow-2xl space-y-6">
+          {/* Note Banner requested by user */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-theme-accent/10 border border-theme-accent/40 flex items-start gap-3.5 shadow-sm">
+            <Sparkles className="w-5 h-5 text-theme-accent shrink-0 mt-0.5" />
+            <div className="text-xs sm:text-sm text-theme-text leading-relaxed">
+              <span className="font-bold text-theme-accent uppercase tracking-wider block mb-1">
+                📌 Note for Host Setup:
+              </span>
+              Please change or customize the <strong className="text-theme-accent font-semibold">Name of the room</strong> and <strong className="text-theme-accent font-semibold">Name of the device</strong> below to enter and host your broadcast so connecting listener devices can recognize your session.
+            </div>
+          </div>
+
           <div className="space-y-4">
             {/* Input 1: Name of the room (from sketch) */}
             <div>
