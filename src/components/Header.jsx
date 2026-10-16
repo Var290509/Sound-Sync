@@ -45,7 +45,7 @@ export default function Header({ onToggleSidebar, activeTab, onSelectTab, connec
 
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => onSelectTab('home')}>
             <img
-              src="/logo.svg"
+              src="/logo.png"
               alt="Sound Sync Logo"
               className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl shadow-[0_0_15px_var(--color-glow)] border border-theme-accent/40 object-cover"
             />
