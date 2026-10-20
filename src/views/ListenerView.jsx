@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { socket } from '../lib/socket';
-import { WebRTCListener } from '../lib/webrtc';
+import { PeerListener } from '../lib/peerRelay';
 import SegmentedCodeInput from '../components/SegmentedCodeInput';
 import AudioVisualizer from '../components/AudioVisualizer';
 import { 
@@ -35,15 +34,13 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
   const [volume, setVolume] = useState(1.0);
   const [isMuted, setIsMuted] = useState(false);
   const [needsAudioUnlock, setNeedsAudioUnlock] = useState(false);
-  const [pingMs, setPingMs] = useState(10);
+  const [pingMs, setPingMs] = useState(6);
   const [bufferMode, setBufferMode] = useState('ultra'); // 'ultra', 'balanced', 'stable'
 
   const audioElementRef = useRef(null);
-  const webRtcListenerRef = useRef(null);
+  const peerListenerRef = useRef(null);
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
-  const gainNodeRef = useRef(null);
-  const nextChunkTimeRef = useRef(0);
 
   // Check URL query parameters for auto-fill room code (e.g. when scanned from QR code)
   useEffect(() => {
@@ -75,9 +72,8 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
 
       const source = ctx.createMediaStreamSource(stream);
       source.connect(analyser);
-      // NOTE: We deliberately do NOT connect analyser to ctx.destination!
-      // Physical playback is handled cleanly by <audio autoPlay playsInline>
-      // to avoid double output, echo, phase cancellation, or iOS Safari silence.
+      // NOTE: Analyser is strictly for visualization.
+      // Physical playback is handled by <audio autoPlay playsInline> to guarantee zero echo/collisions.
 
       analyserRef.current = analyser;
     } catch (e) {
@@ -85,109 +81,50 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
     }
   };
 
-  // Binary WebSocket Audio Fallback (if WebRTC is blocked by firewall or negotiating)
-  useEffect(() => {
-    const handlePcmChunk = (arrayBuffer) => {
-      // Check if WebRTC audio element is actively playing
-      const isWebRtcPlaying = audioElementRef.current && 
-        !audioElementRef.current.paused && 
-        audioElementRef.current.currentTime > 0;
-
-      if (isWebRtcPlaying) return; // WebRTC direct audio is active
-
-      try {
-        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        if (!audioContextRef.current) {
-          audioContextRef.current = new AudioContextClass({
-            latencyHint: 'interactive',
-            sampleRate: 48000,
-          });
-        }
-        const ctx = audioContextRef.current;
-        if (ctx.state === 'suspended') {
-          setNeedsAudioUnlock(true);
-          return;
-        }
-
-        const int16 = new Int16Array(arrayBuffer);
-        const float32 = new Float32Array(int16.length);
-        for (let i = 0; i < int16.length; i++) {
-          float32[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7FFF);
-        }
-
-        const buffer = ctx.createBuffer(1, float32.length, 48000);
-        buffer.getChannelData(0).set(float32);
-
-        const source = ctx.createBufferSource();
-        source.buffer = buffer;
-
-        if (!gainNodeRef.current) {
-          const gain = ctx.createGain();
-          gain.gain.setValueAtTime(isMuted ? 0 : volume, ctx.currentTime);
-          gain.connect(ctx.destination);
-          gainNodeRef.current = gain;
-        }
-
-        source.connect(gainNodeRef.current);
-
-        const now = ctx.currentTime;
-        if (nextChunkTimeRef.current < now) {
-          nextChunkTimeRef.current = now + 0.01; // 10ms ahead
-        }
-        source.start(nextChunkTimeRef.current);
-        nextChunkTimeRef.current += buffer.duration;
-      } catch (err) {
-        console.warn('[Listener View] Fallback chunk error:', err);
-      }
-    };
-
-    socket.on('audio-stream-chunk', handlePcmChunk);
-    return () => {
-      socket.off('audio-stream-chunk', handlePcmChunk);
-    };
-  }, [isMuted, volume]);
-
   // Browser Autoplay Policy Unlock
   const handleUnlockAudio = () => {
-    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume().then(() => {
-        setNeedsAudioUnlock(false);
-      });
-    }
     if (audioElementRef.current) {
       audioElementRef.current.play().then(() => {
         setNeedsAudioUnlock(false);
       }).catch(() => {});
+    }
+    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume().then(() => {
+        setNeedsAudioUnlock(false);
+      });
     }
   };
 
   // Adjust latency buffer mode dynamically
   const handleBufferModeChange = (mode) => {
     setBufferMode(mode);
-    const delay = mode === 'ultra' ? 0.005 : mode === 'balanced' ? 0.03 : 0.08;
-    if (webRtcListenerRef.current) {
-      webRtcListenerRef.current.setPlayoutDelay(delay);
+    const delay = mode === 'ultra' ? 0.005 : mode === 'balanced' ? 0.025 : 0.070;
+    if (peerListenerRef.current) {
+      peerListenerRef.current.setPlayoutDelay(delay);
     }
   };
 
-  // 1. Connect to Host via Socket & WebRTC
+  // 1. Connect to Host via direct P2P WebRTC
   const handleConnect = () => {
     if (!deviceName.trim()) {
       setErrorMsg('Please enter your device name.');
       return;
     }
     if (!code || code.length < 4) {
-      setErrorMsg('Please enter a valid room code.');
+      setErrorMsg('Please enter a valid 6-character room code.');
       return;
     }
 
     setErrorMsg('');
     setIsConnecting(true);
 
-    // CRITICAL: Prime HTML5 audio element and Web Audio API right in the user touch/click gesture
+    // CRITICAL: Prime HTML5 audio element with a playable silent wav data URL inside the click gesture
     if (audioElementRef.current) {
+      audioElementRef.current.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
       audioElementRef.current.play().catch(() => {});
     }
+
+    // Prime Web Audio API context
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!audioContextRef.current) {
@@ -201,73 +138,67 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
       }
     } catch (e) {}
 
-    socket.emit('join-room', {
-      roomCode: code.toUpperCase(),
-      listenerDeviceName: deviceName.trim()
-    }, (res) => {
-      setIsConnecting(false);
-      if (res.success) {
-        setIsConnected(true);
-        setRoomInfo(res);
+    // Initialize PeerListener
+    peerListenerRef.current = new PeerListener(
+      code.toUpperCase(),
+      deviceName.trim(),
+      {
+        onStream: (stream) => {
+          console.log('[Listener View] Remote audio stream received, connecting to audio element');
+          setAudioStream(stream);
 
-        // Start WebRTC listener
-        webRtcListenerRef.current = new WebRTCListener(
-          (stream) => {
-            console.log('[Listener View] Audio stream received, hooking up audio element & visualizer');
-            setAudioStream(stream);
-
-            if (audioElementRef.current) {
-              audioElementRef.current.srcObject = stream;
-              audioElementRef.current.volume = isMuted ? 0 : Math.min(1.0, volume);
-              audioElementRef.current.play().then(() => {
-                setNeedsAudioUnlock(false);
-              }).catch((err) => {
-                console.warn('[Listener View] Autoplay blocked, user interaction required:', err);
-                setNeedsAudioUnlock(true);
-              });
-            }
-
-            setupVisualizerOnly(stream);
-          },
-          (state) => {
-            console.log('[Listener View] Connection state changed:', state);
+          if (audioElementRef.current) {
+            audioElementRef.current.srcObject = stream;
+            audioElementRef.current.volume = isMuted ? 0 : Math.min(1.0, volume);
+            audioElementRef.current.play().then(() => {
+              setNeedsAudioUnlock(false);
+            }).catch((err) => {
+              console.warn('[Listener View] Autoplay blocked, user interaction required:', err);
+              setNeedsAudioUnlock(true);
+            });
           }
-        );
 
-        // Setup ping probe to host
-        const pingInterval = setInterval(() => {
-          const start = Date.now();
-          socket.emit('ping-check', start, () => {
-            const rtt = Date.now() - start;
-            setPingMs(Math.max(4, Math.floor(rtt / 2)));
-          });
-        }, 3000);
-
-        return () => clearInterval(pingInterval);
-      } else {
-        setErrorMsg(res.error || 'Failed to join room. Verify the code.');
+          setupVisualizerOnly(stream);
+        },
+        onPing: (ping) => {
+          setPingMs(ping);
+        },
+        onRoomInfo: (info) => {
+          setRoomInfo(info);
+          setIsConnected(true);
+          setIsConnecting(false);
+        },
+        onHostAudioState: (state) => {
+          setRoomInfo((prev) => prev ? { ...prev, isStreaming: state.isStreaming, audioSource: state.audioSource } : prev);
+        },
+        onStateChange: (state) => {
+          console.log('[Listener View] Connection state changed:', state);
+          if (state === 'connected') {
+            setIsConnected(true);
+            setIsConnecting(false);
+          } else if (state === 'disconnected') {
+            setErrorMsg('Host has disconnected or ended the stream.');
+            handleDisconnect();
+          }
+        },
+        onError: (err) => {
+          setIsConnecting(false);
+          console.error('[Listener View] Peer listener error:', err);
+          if (err.type === 'peer-unavailable') {
+            setErrorMsg('Room not found. Please verify the 6-character room code on the host screen.');
+          } else {
+            setErrorMsg(err.message || 'Connection failed. Please verify code.');
+          }
+        },
       }
-    });
+    );
   };
-
-  // Listen to Host disconnecting
-  useEffect(() => {
-    const handleHostDisconnected = ({ message }) => {
-      setErrorMsg(message || 'The host has ended the audio stream.');
-      handleDisconnect();
-    };
-
-    socket.on('host-disconnected', handleHostDisconnected);
-    return () => {
-      socket.off('host-disconnected', handleHostDisconnected);
-    };
-  }, []);
 
   // Disconnect from room
   const handleDisconnect = () => {
-    if (webRtcListenerRef.current) {
-      webRtcListenerRef.current.destroy();
-      webRtcListenerRef.current = null;
+    if (peerListenerRef.current) {
+      peerListenerRef.current.destroy();
+      peerListenerRef.current = null;
     }
     if (audioElementRef.current) {
       audioElementRef.current.pause();
@@ -280,12 +211,10 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
       audioContextRef.current = null;
     }
     analyserRef.current = null;
-    gainNodeRef.current = null;
     setIsConnected(false);
+    setIsConnecting(false);
     setAudioStream(null);
     setRoomInfo(null);
-    socket.disconnect();
-    socket.connect();
   };
 
   // Adjust volume
@@ -294,10 +223,6 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
     if (audioElementRef.current) {
       audioElementRef.current.volume = isMuted ? 0 : Math.min(1.0, newVol);
     }
-    if (gainNodeRef.current && audioContextRef.current) {
-      const target = isMuted ? 0 : newVol;
-      gainNodeRef.current.gain.setTargetAtTime(target, audioContextRef.current.currentTime, 0.01);
-    }
   };
 
   const handleToggleMute = () => {
@@ -305,10 +230,6 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
     setIsMuted(nextMuted);
     if (audioElementRef.current) {
       audioElementRef.current.volume = nextMuted ? 0 : Math.min(1.0, volume);
-    }
-    if (gainNodeRef.current && audioContextRef.current) {
-      const target = nextMuted ? 0 : volume;
-      gainNodeRef.current.gain.setTargetAtTime(target, audioContextRef.current.currentTime, 0.01);
     }
   };
 
@@ -433,7 +354,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
                   {roomInfo?.roomName || 'Sound Sync Stream'}
                 </h3>
                 <p className="text-xs font-mono text-theme-muted mt-1">
-                  Host Device: <span className="text-theme-accent font-semibold">{roomInfo?.hostDeviceName}</span>
+                  Host Device: <span className="text-theme-accent font-semibold">{roomInfo?.hostDeviceName || 'Host'}</span>
                 </p>
               </div>
 
@@ -513,7 +434,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
                   }`}
                 >
                   <div className="text-xs">Ultra Low</div>
-                  <div className="text-[10px] text-theme-muted">5-15ms (Live)</div>
+                  <div className="text-[10px] text-theme-muted">5-10ms (Live)</div>
                 </button>
                 <button
                   onClick={() => handleBufferModeChange('balanced')}
@@ -524,7 +445,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
                   }`}
                 >
                   <div className="text-xs">Balanced</div>
-                  <div className="text-[10px] text-theme-muted">25-40ms (Sync)</div>
+                  <div className="text-[10px] text-theme-muted">20-30ms (Sync)</div>
                 </button>
                 <button
                   onClick={() => handleBufferModeChange('stable')}
@@ -535,7 +456,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
                   }`}
                 >
                   <div className="text-xs">High Stability</div>
-                  <div className="text-[10px] text-theme-muted">60-90ms (Party)</div>
+                  <div className="text-[10px] text-theme-muted">60-80ms (Party)</div>
                 </button>
               </div>
             </div>

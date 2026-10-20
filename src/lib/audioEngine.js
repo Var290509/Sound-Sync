@@ -18,8 +18,6 @@ class AudioEngine {
     this.isToneActive = false;
     this.volume = 1.0;
     this.isMuted = false;
-    this.onPcmChunk = null; // Callback for binary audio chunk fallback
-    this.processorNode = null;
   }
 
   // Ensure AudioContext is initialized and unlocked by user interaction
@@ -33,22 +31,19 @@ class AudioEngine {
 
       this.analyser = this.audioCtx.createAnalyser();
       this.analyser.fftSize = 256;
-      this.analyser.smoothingTimeConstant = 0.6; // Snappier response
+      this.analyser.smoothingTimeConstant = 0.6; // Snappy visualizer response
 
       this.gainNode = this.audioCtx.createGain();
       this.gainNode.gain.setValueAtTime(this.volume, this.audioCtx.currentTime);
 
       this.streamDestination = this.audioCtx.createMediaStreamDestination();
 
-      // Chain: source -> gain -> analyser -> streamDestination
+      // Main audio pipeline: sources -> gainNode -> analyser -> streamDestination
       this.gainNode.connect(this.analyser);
       this.analyser.connect(this.streamDestination);
 
       // Attach continuous silent carrier so streamDestination.stream ALWAYS has an active audio track
       this.startSilentCarrier();
-
-      // Setup PCM chunk processor for binary fallback streaming
-      this.setupPcmProcessor();
     }
 
     if (this.audioCtx.state === 'suspended') {
@@ -57,53 +52,19 @@ class AudioEngine {
     return this.audioCtx;
   }
 
-  // Creates a zero-volume continuous source to keep track active from second zero
+  // Creates an inaudible continuous carrier to keep the WebRTC audio track permanently alive
   startSilentCarrier() {
     try {
       const osc = this.audioCtx.createOscillator();
       const silentGain = this.audioCtx.createGain();
-      silentGain.gain.setValueAtTime(0.0, this.audioCtx.currentTime); // 100% silent zero-amplitude carrier
+      // 0.00001 is -100dB (inaudible), preventing WebRTC silence suppression (DTX) from putting track to sleep
+      silentGain.gain.setValueAtTime(0.00001, this.audioCtx.currentTime);
       osc.connect(silentGain);
       silentGain.connect(this.streamDestination);
       osc.start();
       this.silentSource = osc;
     } catch (e) {
       console.warn('Silent carrier initialization warning:', e);
-    }
-  }
-
-  // Setup ScriptProcessor to sample audio chunks for WebSocket fallback streaming
-  setupPcmProcessor() {
-    try {
-      // Buffer size 1024 at 48kHz is ~21ms of audio (ultra-low latency)
-      const bufferSize = 1024;
-      const processor = this.audioCtx.createScriptProcessor(bufferSize, 1, 1);
-      this.analyser.connect(processor);
-      // ScriptProcessor requires connection to destination to fire onaudioprocess
-      const nullGain = this.audioCtx.createGain();
-      nullGain.gain.value = 0;
-      processor.connect(nullGain);
-      nullGain.connect(this.audioCtx.destination);
-
-      processor.onaudioprocess = (e) => {
-        if (typeof this.onPcmChunk === 'function') {
-          const inputData = e.inputBuffer.getChannelData(0);
-          // Convert Float32 to Int16 PCM for compact, fast network transfer
-          const pcm16 = new Int16Array(inputData.length);
-          let hasAudio = false;
-          for (let i = 0; i < inputData.length; i++) {
-            const s = Math.max(-1, Math.min(1, inputData[i]));
-            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-            if (Math.abs(pcm16[i]) > 50) hasAudio = true;
-          }
-          if (hasAudio) {
-            this.onPcmChunk(pcm16.buffer);
-          }
-        }
-      };
-      this.processorNode = processor;
-    } catch (err) {
-      console.warn('PCM processor setup warning:', err);
     }
   }
 
@@ -156,13 +117,14 @@ class AudioEngine {
       if (!audioTracks || audioTracks.length === 0) {
         displayStream.getTracks().forEach((t) => t.stop());
         throw new Error(
-          'No audio track detected! Make sure you check "Share audio" or "Share system audio" in the browser share dialog.'
+          'No audio track detected! In the screen share dialog, select "Chrome Tab" and make sure the "Also share tab audio" switch is turned ON.'
         );
       }
 
-      // Immediately stop video tracks to completely free WiFi bandwidth and CPU for audio
+      // DO NOT call vt.stop()! In Chrome, stopping the video track terminates the screen share session!
+      // Instead, disable video rendering to save CPU/GPU:
       displayStream.getVideoTracks().forEach((vt) => {
-        try { vt.stop(); } catch (e) {}
+        vt.enabled = false;
       });
 
       this.currentStream = displayStream;

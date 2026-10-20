@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { socket } from '../lib/socket';
 import { audioEngine } from '../lib/audioEngine';
-import { WebRTCHost } from '../lib/webrtc';
+import { PeerHost } from '../lib/peerRelay';
 import AudioVisualizer from '../components/AudioVisualizer';
 import QRCodeModal from '../components/QRCodeModal';
 import { 
@@ -24,6 +23,15 @@ import {
   Signal
 } from 'lucide-react';
 
+function generateRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
 export default function HostView({ onSelectTab }) {
   // Form fields as sketched in the drawing
   const [roomName, setRoomName] = useState('Living Room Sound');
@@ -35,49 +43,19 @@ export default function HostView({ onSelectTab }) {
   const [selectedSource, setSelectedSource] = useState('tab'); // 'tab', 'mic', 'file', 'tone'
   const [isStreaming, setIsStreaming] = useState(false);
   const [connectedListeners, setConnectedListeners] = useState([]);
-  const [audioVolume, setAudioVolume] = useState(1.0);
-  const [isMuted, setIsMuted] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
   const [isQrOpen, setIsQrOpen] = useState(false);
-  const [networkIp, setNetworkIp] = useState('localhost');
-  const [localPort, setLocalPort] = useState(3001);
 
-  const webRtcHostRef = useRef(null);
+  const peerHostRef = useRef(null);
   const fileInputRef = useRef(null);
-
-  // Fetch local LAN network IP for quick mobile connect
-  useEffect(() => {
-    const apiBase = import.meta.env.VITE_SERVER_URL ? import.meta.env.VITE_SERVER_URL : '';
-    fetch(`${apiBase}/api/network-info`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.primaryIp) setNetworkIp(data.primaryIp);
-        if (data.port) setLocalPort(data.port);
-      })
-      .catch(() => {});
-  }, []);
-
-  // Listen to socket listener updates
-  useEffect(() => {
-    const handleListenerCountUpdate = ({ count, listeners }) => {
-      setConnectedListeners(listeners || []);
-    };
-
-    socket.on('listener-count-update', handleListenerCountUpdate);
-
-    return () => {
-      socket.off('listener-count-update', handleListenerCountUpdate);
-    };
-  }, []);
 
   // Construct shareable link for mobile phones
   const getJoinUrl = () => {
     if (typeof window === 'undefined') return '';
-    const port = window.location.port;
+    const host = window.location.host;
     const protocol = window.location.protocol;
-    const host = networkIp && networkIp !== 'localhost' ? networkIp : window.location.hostname;
-    return `${protocol}//${host}${port ? `:${port}` : ''}/?join=${roomCode}`;
+    return `${protocol}//${host}/?join=${roomCode}`;
   };
 
   // 1. Create Room & Start Hosting
@@ -89,30 +67,40 @@ export default function HostView({ onSelectTab }) {
     setErrorMsg('');
 
     try {
-      // Pre-initialize AudioContext during the user click gesture
+      // Pre-initialize Web Audio context inside this user gesture
       await audioEngine.initContext();
-
-      // Hook up PCM fallback chunk broadcasting
-      audioEngine.onPcmChunk = (chunk) => {
-        if (socket && socket.connected) {
-          socket.emit('audio-stream-chunk', chunk);
-        }
-      };
     } catch (err) {
       console.warn('[Host View] AudioContext init warning:', err);
     }
 
-    socket.emit('create-room', { roomName, hostDeviceName: deviceName }, (res) => {
-      if (res.success) {
-        setRoomCode(res.roomCode);
-        setIsHosting(true);
+    const newCode = generateRoomCode();
+    setRoomCode(newCode);
+    setIsHosting(true);
 
-        // Initialize WebRTC Host controller with guaranteed active carrier stream
-        webRtcHostRef.current = new WebRTCHost(() => audioEngine.getStream());
-      } else {
-        setErrorMsg('Failed to create room. Please try again.');
+    // Initialize PeerHost via direct WebRTC cloud signaling (works globally & on Vercel)
+    peerHostRef.current = new PeerHost(
+      newCode,
+      roomName,
+      deviceName,
+      () => audioEngine.getStream(),
+      {
+        onListenerChange: (listeners) => {
+          setConnectedListeners(listeners);
+        },
+        onStatusChange: (status) => {
+          console.log('[Host View] Cloud signaling status:', status);
+        },
+        onError: (err) => {
+          console.error('[Host View] Host peer error:', err);
+          if (err.type === 'unavailable-id') {
+            setErrorMsg('Room code collision. Re-generating room code...');
+            setTimeout(handleStartHosting, 1000);
+          } else {
+            setErrorMsg(err.message || 'Peer connection notification');
+          }
+        },
       }
-    });
+    );
   };
 
   // 2. Start Audio Stream (Tab/Screen or other sources)
@@ -134,15 +122,10 @@ export default function HostView({ onSelectTab }) {
         setSelectedSource(sourceType);
 
         // Update WebRTC track for all listeners
-        if (webRtcHostRef.current) {
-          webRtcHostRef.current.updateAudioTrack(stream);
+        if (peerHostRef.current) {
+          peerHostRef.current.updateAudioTrack(stream);
+          peerHostRef.current.setAudioState(true, sourceType);
         }
-
-        // Notify server that host is active
-        socket.emit('host-audio-state', {
-          isStreaming: true,
-          audioSource: sourceType,
-        });
       }
     } catch (err) {
       console.error('Audio start error:', err);
@@ -160,14 +143,10 @@ export default function HostView({ onSelectTab }) {
       setIsStreaming(true);
       setSelectedSource('file');
 
-      if (webRtcHostRef.current) {
-        webRtcHostRef.current.updateAudioTrack(stream);
+      if (peerHostRef.current) {
+        peerHostRef.current.updateAudioTrack(stream);
+        peerHostRef.current.setAudioState(true, 'file');
       }
-
-      socket.emit('host-audio-state', {
-        isStreaming: true,
-        audioSource: 'file',
-      });
     } catch (err) {
       setErrorMsg('Error reading audio file: ' + err.message);
     }
@@ -177,24 +156,21 @@ export default function HostView({ onSelectTab }) {
   const handleStopAudioStream = () => {
     audioEngine.stopAll();
     setIsStreaming(false);
-    socket.emit('host-audio-state', {
-      isStreaming: false,
-      audioSource: selectedSource,
-    });
+    if (peerHostRef.current) {
+      peerHostRef.current.setAudioState(false, selectedSource);
+    }
   };
 
   // Stop Entire Hosting Session
   const handleCloseSession = () => {
     handleStopAudioStream();
-    if (webRtcHostRef.current) {
-      webRtcHostRef.current.destroy();
-      webRtcHostRef.current = null;
+    if (peerHostRef.current) {
+      peerHostRef.current.destroy();
+      peerHostRef.current = null;
     }
     setIsHosting(false);
     setRoomCode('');
     setConnectedListeners([]);
-    socket.disconnect();
-    socket.connect();
   };
 
   const handleCopyLink = () => {
@@ -495,7 +471,7 @@ export default function HostView({ onSelectTab }) {
               <div className="space-y-2">
                 {connectedListeners.map((listener) => (
                   <div
-                    key={listener.socketId}
+                    key={listener.id}
                     className="flex items-center justify-between p-3.5 rounded-2xl bg-theme-bg border border-theme-border"
                   >
                     <div className="flex items-center gap-3">
@@ -509,7 +485,7 @@ export default function HostView({ onSelectTab }) {
                         <div className="text-[10px] font-mono text-theme-muted flex items-center gap-2 mt-0.5">
                           <span className="text-emerald-400">● Streaming</span>
                           <span>•</span>
-                          <span>WiFi Latency: ~10ms</span>
+                          <span>WiFi Latency: ~{listener.ping || 6}ms</span>
                         </div>
                       </div>
                     </div>
