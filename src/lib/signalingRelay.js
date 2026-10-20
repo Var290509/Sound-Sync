@@ -12,9 +12,40 @@ const RTC_CONFIG = {
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
     { urls: 'stun:stun.services.mozilla.com' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
   ],
   iceCandidatePoolSize: 10,
 };
+
+/**
+ * Optimize SDP for ultra-low latency Opus stereo streaming (5ms packetization)
+ */
+function optimizeAudioSdp(sdp) {
+  if (!sdp) return sdp;
+  let modified = sdp;
+  // Upgrade Opus payload attributes: 5ms frame size, CBR, stereo, max bitrate
+  if (modified.includes('a=fmtp:111')) {
+    modified = modified.replace(
+      /a=fmtp:111[^\r\n]*/g,
+      'a=fmtp:111 minptime=5;ptime=5;maxaveragebitrate=256000;stereo=1;sprop-stereo=1;useinbandfec=1;cbr=1'
+    );
+  }
+  return modified;
+}
 
 /**
  * SignalingHost - Cloud signaling & WebRTC broadcaster for Sound Sync
@@ -34,6 +65,7 @@ export class SignalingHost {
     this.isStreaming = false;
     this.audioSource = 'tab';
     this.isDestroyed = false;
+    this.heartbeatInterval = null;
 
     this.initMqtt();
   }
@@ -41,27 +73,47 @@ export class SignalingHost {
   initMqtt(brokerIndex = 0) {
     if (this.isDestroyed) return;
     const brokerUrl = BROKER_URLS[brokerIndex] || BROKER_URLS[0];
-    console.log(`[SignalingHost] Connecting to signaling broker: ${brokerUrl}`);
+    console.log(`[SignalingHost] Connecting to broker: ${brokerUrl}`);
+
+    const presenceTopic = `soundsync/${this.roomCode}/presence`;
+    const hostTopic = `soundsync/${this.roomCode}/host`;
 
     const client = mqtt.connect(brokerUrl, {
       clientId: `host_${this.roomCode}_${Math.random().toString(36).slice(2, 7)}`,
       clean: true,
-      connectTimeout: 5000,
+      connectTimeout: 7000,
       reconnectPeriod: 3000,
+      will: {
+        topic: presenceTopic,
+        payload: JSON.stringify({ active: false, roomCode: this.roomCode }),
+        retain: true,
+        qos: 1,
+      },
     });
 
     this.mqttClient = client;
-    const hostTopic = `soundsync/${this.roomCode}/host`;
 
     client.on('connect', () => {
       console.log(`[SignalingHost] Connected to broker. Subscribing to: ${hostTopic}`);
+      
+      // 1. Subscribe to incoming messages from listeners
       client.subscribe(hostTopic, { qos: 1 }, (err) => {
         if (!err) {
           if (this.callbacks.onStatusChange) {
             this.callbacks.onStatusChange('ready');
           }
+          // 2. Announce room presence with retain = true
+          this.publishPresence(true);
         }
       });
+
+      // 3. Keep presence fresh with periodic heartbeat
+      if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = setInterval(() => {
+        if (client.connected && !this.isDestroyed) {
+          this.publishPresence(true);
+        }
+      }, 10000);
     });
 
     client.on('message', (topic, message) => {
@@ -69,7 +121,7 @@ export class SignalingHost {
         const data = JSON.parse(message.toString());
         this.handleMessage(data);
       } catch (e) {
-        console.warn('[SignalingHost] Invalid message payload:', e);
+        console.warn('[SignalingHost] Invalid payload:', e);
       }
     });
 
@@ -79,6 +131,21 @@ export class SignalingHost {
         client.end(true, () => this.initMqtt(brokerIndex + 1));
       }
     });
+  }
+
+  publishPresence(isActive) {
+    if (!this.mqttClient || !this.mqttClient.connected) return;
+    const presenceTopic = `soundsync/${this.roomCode}/presence`;
+    const payload = JSON.stringify({
+      active: isActive,
+      roomCode: this.roomCode,
+      roomName: this.roomName,
+      hostDeviceName: this.hostDeviceName,
+      isStreaming: this.isStreaming,
+      audioSource: this.audioSource,
+      timestamp: Date.now(),
+    });
+    this.mqttClient.publish(presenceTopic, payload, { retain: true, qos: 1 });
   }
 
   async handleMessage(data) {
@@ -192,7 +259,7 @@ export class SignalingHost {
           const sender = pc.addTrack(track, stream);
           const params = sender.getParameters();
           if (params.encodings && params.encodings[0]) {
-            params.encodings[0].maxBitrate = 128000;
+            params.encodings[0].maxBitrate = 256000;
             params.encodings[0].priority = 'high';
             params.encodings[0].networkPriority = 'high';
             sender.setParameters(params).catch(() => {});
@@ -224,7 +291,12 @@ export class SignalingHost {
         offerToReceiveAudio: false,
         offerToReceiveVideo: false,
       });
-      await pc.setLocalDescription(offer);
+
+      // Munge SDP for 5ms Opus packetization & stereo
+      const optimizedSdp = optimizeAudioSdp(offer.sdp);
+      const optimizedOffer = { type: offer.type, sdp: optimizedSdp };
+
+      await pc.setLocalDescription(optimizedOffer);
 
       // Publish offer to listener
       if (this.mqttClient && this.mqttClient.connected) {
@@ -232,7 +304,7 @@ export class SignalingHost {
           `soundsync/${this.roomCode}/listener/${listenerId}`,
           JSON.stringify({
             type: 'offer',
-            offer,
+            offer: optimizedOffer,
             roomName: this.roomName,
             hostDeviceName: this.hostDeviceName,
             isStreaming: this.isStreaming,
@@ -271,6 +343,9 @@ export class SignalingHost {
     this.isStreaming = isStreaming;
     if (audioSource) this.audioSource = audioSource;
 
+    // Update retained presence
+    this.publishPresence(true);
+
     // Broadcast state to all listeners via direct P2P DataChannels
     this.peers.forEach((peerData) => {
       if (peerData.dc && peerData.dc.readyState === 'open') {
@@ -303,6 +378,12 @@ export class SignalingHost {
 
   destroy() {
     this.isDestroyed = true;
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+    this.publishPresence(false);
+
     this.peers.forEach((peerData) => {
       try {
         if (peerData.dc) peerData.dc.close();
@@ -338,7 +419,8 @@ export class SignalingListener {
     this.candidateQueue = [];
     this.remoteDescSet = false;
     this.pingInterval = null;
-    this.roomFoundTimeout = null;
+    this.joinRetryInterval = null;
+    this.roomDiscoveryTimeout = null;
     this.playoutDelay = 0.005; // 5ms default ultra-low latency target
     this.receiver = null;
     this.isDestroyed = false;
@@ -354,39 +436,47 @@ export class SignalingListener {
     const client = mqtt.connect(brokerUrl, {
       clientId: `listener_${this.listenerId}`,
       clean: true,
-      connectTimeout: 5000,
+      connectTimeout: 7000,
       reconnectPeriod: 3000,
     });
 
     this.mqttClient = client;
     const listenerTopic = `soundsync/${this.roomCode}/listener/${this.listenerId}`;
+    const presenceTopic = `soundsync/${this.roomCode}/presence`;
     const hostTopic = `soundsync/${this.roomCode}/host`;
 
     client.on('connect', () => {
-      console.log(`[SignalingListener] Connected to broker. Subscribing to: ${listenerTopic}`);
-      client.subscribe(listenerTopic, { qos: 1 }, (err) => {
+      console.log(`[SignalingListener] Connected to broker. Subscribing to: ${listenerTopic} and ${presenceTopic}`);
+      
+      // Subscribe to private listener channel and room presence
+      client.subscribe([listenerTopic, presenceTopic], { qos: 1 }, (err) => {
         if (!err) {
-          // Send join request to host
-          console.log(`[SignalingListener] Publishing join request to ${hostTopic}...`);
-          client.publish(
-            hostTopic,
-            JSON.stringify({
-              type: 'join',
-              listenerId: this.listenerId,
-              deviceName: this.deviceName,
-            }),
-            { qos: 1 }
-          );
+          // Send join request immediately
+          this.sendJoinRequest();
 
-          // 5-second room discovery timer: If host doesn't reply with an offer, room does not exist
-          this.roomFoundTimeout = setTimeout(() => {
-            if (!this.remoteDescSet && this.callbacks.onError) {
+          // Resilient retry loop: send join every 1.5 seconds until offer is received
+          let retryCount = 0;
+          this.joinRetryInterval = setInterval(() => {
+            if (this.remoteDescSet || this.isDestroyed) {
+              if (this.joinRetryInterval) clearInterval(this.joinRetryInterval);
+              return;
+            }
+            retryCount++;
+            if (retryCount <= 8) {
+              console.log(`[SignalingListener] Retrying join request (${retryCount}/8)...`);
+              this.sendJoinRequest();
+            }
+          }, 1500);
+
+          // 12-second room discovery timeout (gives ample time for ICE gathering & cross-device handshake)
+          this.roomDiscoveryTimeout = setTimeout(() => {
+            if (!this.remoteDescSet && !this.isDestroyed && this.callbacks.onError) {
               this.callbacks.onError({
                 type: 'room-not-found',
-                message: 'Room not found. Please verify the 6-character room code on the host screen.',
+                message: 'Room not found or host inactive. Please verify the 6-character room code on the host screen.',
               });
             }
-          }, 5000);
+          }, 12000);
         }
       });
     });
@@ -394,7 +484,31 @@ export class SignalingListener {
     client.on('message', (topic, message) => {
       try {
         const data = JSON.parse(message.toString());
-        this.handleMessage(data);
+        
+        // Check presence updates
+        if (topic === presenceTopic) {
+          if (data.active === false) {
+            if (this.callbacks.onError) {
+              this.callbacks.onError({
+                type: 'host-offline',
+                message: 'Host has ended the session or disconnected.',
+              });
+            }
+          } else if (data.active === true) {
+            console.log('[SignalingListener] Confirmed room is active via presence!');
+            if (this.callbacks.onRoomInfo) {
+              this.callbacks.onRoomInfo({
+                roomCode: this.roomCode,
+                roomName: data.roomName || 'Sound Sync Stream',
+                hostDeviceName: data.hostDeviceName || 'Host Machine',
+                isStreaming: Boolean(data.isStreaming),
+                audioSource: data.audioSource || 'tab',
+              });
+            }
+          }
+        } else {
+          this.handleMessage(data);
+        }
       } catch (e) {
         console.warn('[SignalingListener] Invalid payload:', e);
       }
@@ -408,14 +522,32 @@ export class SignalingListener {
     });
   }
 
+  sendJoinRequest() {
+    if (!this.mqttClient || !this.mqttClient.connected) return;
+    const hostTopic = `soundsync/${this.roomCode}/host`;
+    this.mqttClient.publish(
+      hostTopic,
+      JSON.stringify({
+        type: 'join',
+        listenerId: this.listenerId,
+        deviceName: this.deviceName,
+      }),
+      { qos: 1 }
+    );
+  }
+
   async handleMessage(data) {
     const { type, offer, candidate, roomName, hostDeviceName, isStreaming, audioSource } = data;
 
-    // 1. Host responded with WebRTC offer! Room found!
+    // 1. Host responded with WebRTC offer!
     if (type === 'offer' && offer) {
-      if (this.roomFoundTimeout) {
-        clearTimeout(this.roomFoundTimeout);
-        this.roomFoundTimeout = null;
+      if (this.roomDiscoveryTimeout) {
+        clearTimeout(this.roomDiscoveryTimeout);
+        this.roomDiscoveryTimeout = null;
+      }
+      if (this.joinRetryInterval) {
+        clearInterval(this.joinRetryInterval);
+        this.joinRetryInterval = null;
       }
 
       if (this.callbacks.onRoomInfo) {
@@ -538,7 +670,10 @@ export class SignalingListener {
       }
 
       const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
+      const optimizedSdp = optimizeAudioSdp(answer.sdp);
+      const optimizedAnswer = { type: answer.type, sdp: optimizedSdp };
+
+      await pc.setLocalDescription(optimizedAnswer);
 
       // Send answer to host
       if (this.mqttClient && this.mqttClient.connected) {
@@ -546,7 +681,7 @@ export class SignalingListener {
           `soundsync/${this.roomCode}/host`,
           JSON.stringify({
             type: 'answer',
-            answer,
+            answer: optimizedAnswer,
             listenerId: this.listenerId,
           }),
           { qos: 1 }
@@ -589,9 +724,13 @@ export class SignalingListener {
 
   destroy() {
     this.isDestroyed = true;
-    if (this.roomFoundTimeout) {
-      clearTimeout(this.roomFoundTimeout);
-      this.roomFoundTimeout = null;
+    if (this.roomDiscoveryTimeout) {
+      clearTimeout(this.roomDiscoveryTimeout);
+      this.roomDiscoveryTimeout = null;
+    }
+    if (this.joinRetryInterval) {
+      clearInterval(this.joinRetryInterval);
+      this.joinRetryInterval = null;
     }
     if (this.pingInterval) {
       clearInterval(this.pingInterval);

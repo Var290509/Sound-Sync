@@ -21,7 +21,7 @@ import {
 export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
   // Input fields from Sketch 3
   const [deviceName, setDeviceName] = useState(() => {
-    return 'Listener ' + (navigator.userAgent.includes('Mobile') ? 'Mobile' : 'Device');
+    return 'Listener ' + (typeof navigator !== 'undefined' && navigator.userAgent.includes('Mobile') ? 'Mobile' : 'Device');
   });
   const [code, setCode] = useState(initialRoomCode);
 
@@ -40,11 +40,14 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
   const audioElementRef = useRef(null);
   const signalingListenerRef = useRef(null);
   const audioContextRef = useRef(null);
+  const masterGainRef = useRef(null);
   const analyserRef = useRef(null);
+  const mediaStreamSourceRef = useRef(null);
 
   // Clean up listener on unmount or tab close
   useEffect(() => {
     const handleBeforeUnload = () => {
+      cleanupAudio();
       if (signalingListenerRef.current) {
         signalingListenerRef.current.destroy();
       }
@@ -52,6 +55,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      cleanupAudio();
       if (signalingListenerRef.current) {
         signalingListenerRef.current.destroy();
       }
@@ -67,8 +71,35 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
     }
   }, []);
 
-  // Setup Visualizer only (avoids double playback and audio collisions)
-  const setupVisualizerOnly = (stream) => {
+  // Cleanup audio nodes safely
+  const cleanupAudio = () => {
+    if (mediaStreamSourceRef.current) {
+      try {
+        mediaStreamSourceRef.current.disconnect();
+      } catch (e) {}
+      mediaStreamSourceRef.current = null;
+    }
+    if (masterGainRef.current) {
+      try {
+        masterGainRef.current.disconnect();
+      } catch (e) {}
+      masterGainRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch (e) {}
+      audioContextRef.current = null;
+    }
+    if (audioElementRef.current) {
+      audioElementRef.current.pause();
+      audioElementRef.current.srcObject = null;
+    }
+    analyserRef.current = null;
+  };
+
+  // Setup low-latency Web Audio API direct hardware playback
+  const setupAudioPipeline = (stream) => {
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!audioContextRef.current) {
@@ -82,36 +113,61 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
         ctx.resume().catch(() => {});
       }
 
+      // Create Analyser Node for responsive visualizer
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.6;
-
-      const source = ctx.createMediaStreamSource(stream);
-      source.connect(analyser);
-
-      // Connect analyser to a zero-gain node on ctx.destination so browser never puts Web Audio graph to sleep
-      const nullGain = ctx.createGain();
-      nullGain.gain.value = 0;
-      analyser.connect(nullGain);
-      nullGain.connect(ctx.destination);
-
       analyserRef.current = analyser;
+
+      // Create Master Gain Node for volume control
+      const masterGain = ctx.createGain();
+      const targetGain = isMuted ? 0 : Math.min(2.0, volume);
+      masterGain.gain.setValueAtTime(targetGain, ctx.currentTime);
+      masterGainRef.current = masterGain;
+
+      // Connect: remoteStream -> mediaStreamSource -> analyser -> masterGain -> hardware speakers (ctx.destination)
+      const source = ctx.createMediaStreamSource(stream);
+      mediaStreamSourceRef.current = source;
+      source.connect(analyser);
+      analyser.connect(masterGain);
+      masterGain.connect(ctx.destination);
+
+      // Keep hidden audio element active in background tab with muted=true to prevent OS sleep
+      if (audioElementRef.current) {
+        audioElementRef.current.removeAttribute('src');
+        audioElementRef.current.srcObject = stream;
+        audioElementRef.current.muted = true;
+        audioElementRef.current.play().then(() => {
+          setNeedsAudioUnlock(false);
+        }).catch((err) => {
+          console.warn('[Listener View] Autoplay policy status:', err);
+          if (ctx.state === 'suspended') {
+            setNeedsAudioUnlock(true);
+          }
+        });
+      }
     } catch (e) {
-      console.warn('[Listener View] Visualizer setup warning:', e);
+      console.warn('[Listener View] Audio pipeline setup warning:', e);
+      // Fallback: If Web Audio fails, unmute HTML5 audio element
+      if (audioElementRef.current) {
+        audioElementRef.current.muted = isMuted;
+        audioElementRef.current.volume = Math.min(1.0, volume);
+        audioElementRef.current.play().catch(() => setNeedsAudioUnlock(true));
+      }
     }
   };
 
   // Browser Autoplay Policy Unlock
   const handleUnlockAudio = () => {
+    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume().then(() => {
+        setNeedsAudioUnlock(false);
+      }).catch(() => {});
+    }
     if (audioElementRef.current) {
       audioElementRef.current.play().then(() => {
         setNeedsAudioUnlock(false);
       }).catch(() => {});
-    }
-    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume().then(() => {
-        setNeedsAudioUnlock(false);
-      });
     }
   };
 
@@ -139,13 +195,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
     setErrorMsg('');
     setIsConnecting(true);
 
-    // CRITICAL: Prime HTML5 audio element with a playable silent wav data URL inside the click gesture
-    if (audioElementRef.current) {
-      audioElementRef.current.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
-      audioElementRef.current.play().catch(() => {});
-    }
-
-    // Prime Web Audio API context
+    // Pre-initialize Web Audio API context inside user touch/click gesture
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!audioContextRef.current) {
@@ -159,29 +209,21 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
       }
     } catch (e) {}
 
+    // Prime HTML5 audio element inside user gesture
+    if (audioElementRef.current) {
+      audioElementRef.current.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+      audioElementRef.current.play().catch(() => {});
+    }
+
     // Initialize SignalingListener
     signalingListenerRef.current = new SignalingListener(
       cleanCode,
       deviceName.trim(),
       {
         onStream: (stream) => {
-          console.log('[Listener View] Remote audio stream received, connecting to audio element');
+          console.log('[Listener View] Remote audio stream received, connecting to audio pipeline');
           setAudioStream(stream);
-
-          if (audioElementRef.current) {
-            audioElementRef.current.removeAttribute('src');
-            audioElementRef.current.src = '';
-            audioElementRef.current.srcObject = stream;
-            audioElementRef.current.volume = isMuted ? 0 : Math.min(1.0, volume);
-            audioElementRef.current.play().then(() => {
-              setNeedsAudioUnlock(false);
-            }).catch((err) => {
-              console.warn('[Listener View] Autoplay blocked, user interaction required:', err);
-              setNeedsAudioUnlock(true);
-            });
-          }
-
-          setupVisualizerOnly(stream);
+          setupAudioPipeline(stream);
         },
         onPing: (ping) => {
           setPingMs(ping);
@@ -206,7 +248,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
         },
         onError: (err) => {
           setIsConnecting(false);
-          console.error('[Listener View] Signaling listener error:', err);
+          console.error('[Listener View] Signaling error:', err);
           setErrorMsg(err.message || 'Connection notice.');
         },
       }
@@ -219,17 +261,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
       signalingListenerRef.current.destroy();
       signalingListenerRef.current = null;
     }
-    if (audioElementRef.current) {
-      audioElementRef.current.pause();
-      audioElementRef.current.srcObject = null;
-    }
-    if (audioContextRef.current) {
-      try {
-        audioContextRef.current.close();
-      } catch (e) {}
-      audioContextRef.current = null;
-    }
-    analyserRef.current = null;
+    cleanupAudio();
     setIsConnected(false);
     setIsConnecting(false);
     setAudioStream(null);
@@ -239,6 +271,10 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
   // Adjust volume
   const handleVolumeChange = (newVol) => {
     setVolume(newVol);
+    if (masterGainRef.current && audioContextRef.current) {
+      const target = isMuted ? 0 : Math.min(2.0, newVol);
+      masterGainRef.current.gain.setTargetAtTime(target, audioContextRef.current.currentTime, 0.01);
+    }
     if (audioElementRef.current) {
       audioElementRef.current.volume = isMuted ? 0 : Math.min(1.0, newVol);
     }
@@ -247,25 +283,29 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
   const handleToggleMute = () => {
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
+    if (masterGainRef.current && audioContextRef.current) {
+      const target = nextMuted ? 0 : Math.min(2.0, volume);
+      masterGainRef.current.gain.setTargetAtTime(target, audioContextRef.current.currentTime, 0.01);
+    }
     if (audioElementRef.current) {
-      audioElementRef.current.volume = nextMuted ? 0 : Math.min(1.0, volume);
+      audioElementRef.current.muted = nextMuted;
     }
   };
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-4 sm:py-8 space-y-8">
-      {/* Hidden audio element for WebRTC playback */}
+    <div className="max-w-4xl mx-auto space-y-8 animate-fade-in pb-12">
+      {/* Hidden audio element for WebRTC playback session preservation */}
       <audio ref={audioElementRef} autoPlay playsInline />
 
-      {/* Header matching Sketch 3 */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-theme-border gap-4">
+      {/* View Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono font-bold bg-theme-accent/15 border border-theme-accent/40 text-theme-accent mb-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono font-bold bg-theme-accent/10 text-theme-accent border border-theme-accent/30 mb-2">
             <Headphones className="w-3.5 h-3.5" />
             <span>RECEIVER MODE</span>
           </div>
           <h2 className="text-3xl sm:text-4xl font-extrabold font-display text-theme-text">
-            Connect
+            CLIENT
           </h2>
           <p className="text-sm text-theme-muted mt-1">
             Connect your device to receive and play low-latency audio over WiFi.
@@ -319,6 +359,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
               <SegmentedCodeInput
                 value={code}
                 onChange={setCode}
+                onSubmit={handleConnect}
                 length={6}
                 disabled={isConnecting}
               />
@@ -391,6 +432,16 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Host Audio Broadcast Status */}
+            <div className="mt-5 pt-4 border-t border-theme-border flex items-center gap-2 text-xs font-mono">
+              <span className={`w-2.5 h-2.5 rounded-full ${roomInfo?.isStreaming ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              <span className={roomInfo?.isStreaming ? 'text-emerald-400 font-bold' : 'text-amber-400 font-medium'}>
+                {roomInfo?.isStreaming 
+                  ? `Host is actively broadcasting sound (${(roomInfo?.audioSource || 'Audio').toUpperCase()})` 
+                  : 'Host audio is currently paused. Sound will resume automatically when host plays.'}
+              </span>
             </div>
           </div>
 

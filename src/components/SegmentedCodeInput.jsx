@@ -1,14 +1,37 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef } from 'react';
 
-export default function SegmentedCodeInput({ value = '', onChange, length = 6, disabled = false }) {
+export default function SegmentedCodeInput({
+  value = '',
+  onChange,
+  onSubmit,
+  length = 6,
+  disabled = false,
+}) {
   const inputsRef = useRef([]);
 
   // Ensure value is an array of length characters
   const charArray = (value || '').toUpperCase().padEnd(length, ' ').slice(0, length).split('');
 
-  const handleChange = (index, char) => {
+  const handleChange = (index, rawValue) => {
     if (disabled) return;
-    const cleanChar = char.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(-1);
+    const cleanChars = rawValue.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+    // Case A: User pasted or mobile keyboard inserted multiple characters
+    if (cleanChars.length > 1) {
+      const newChars = [...charArray];
+      for (let i = 0; i < cleanChars.length && (index + i) < length; i++) {
+        newChars[index + i] = cleanChars[i];
+      }
+      const newCode = newChars.join('').trimEnd();
+      onChange(newCode);
+
+      const nextIndex = Math.min(index + cleanChars.length, length - 1);
+      inputsRef.current[nextIndex]?.focus();
+      return;
+    }
+
+    // Case B: Single character entered
+    const cleanChar = cleanChars.slice(-1);
     const newChars = [...charArray];
     newChars[index] = cleanChar || ' ';
     const newCode = newChars.join('').trimEnd();
@@ -22,6 +45,13 @@ export default function SegmentedCodeInput({ value = '', onChange, length = 6, d
 
   const handleKeyDown = (index, e) => {
     if (disabled) return;
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (onSubmit) onSubmit();
+      return;
+    }
+
     if (e.key === 'Backspace') {
       if (charArray[index] === ' ' && index > 0) {
         inputsRef.current[index - 1]?.focus();
@@ -43,7 +73,11 @@ export default function SegmentedCodeInput({ value = '', onChange, length = 6, d
   const handlePaste = (e) => {
     if (disabled) return;
     e.preventDefault();
-    const pasted = e.clipboardData.getData('text').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, length);
+    const pasted = e.clipboardData
+      .getData('text')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')
+      .slice(0, length);
     onChange(pasted);
     const nextIndex = Math.min(pasted.length, length - 1);
     inputsRef.current[nextIndex]?.focus();
@@ -59,7 +93,7 @@ export default function SegmentedCodeInput({ value = '', onChange, length = 6, d
             ref={(el) => (inputsRef.current[index] = el)}
             type="text"
             inputMode="text"
-            maxLength={1}
+            maxLength={length} // Allow full string to be pasted/entered so handleChange can distribute
             value={char}
             disabled={disabled}
             onChange={(e) => handleChange(index, e.target.value)}

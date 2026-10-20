@@ -20,7 +20,8 @@ import {
   Wifi, 
   AlertCircle,
   Sparkles,
-  Signal
+  Signal,
+  Bell
 } from 'lucide-react';
 
 function generateRoomCode() {
@@ -46,6 +47,8 @@ export default function HostView({ onSelectTab }) {
   const [errorMsg, setErrorMsg] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
   const [isQrOpen, setIsQrOpen] = useState(false);
+  const [volume, setVolume] = useState(1.0);
+  const [isMuted, setIsMuted] = useState(false);
 
   const signalingHostRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -56,6 +59,7 @@ export default function HostView({ onSelectTab }) {
       if (signalingHostRef.current) {
         signalingHostRef.current.destroy();
       }
+      audioEngine.stopAll();
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
@@ -63,6 +67,7 @@ export default function HostView({ onSelectTab }) {
       if (signalingHostRef.current) {
         signalingHostRef.current.destroy();
       }
+      audioEngine.stopAll();
     };
   }, []);
 
@@ -93,7 +98,7 @@ export default function HostView({ onSelectTab }) {
     setRoomCode(newCode);
     setIsHosting(true);
 
-    // Initialize SignalingHost via high-reliability cloud broker
+    // Initialize SignalingHost via high-reliability cloud broker with retained presence
     signalingHostRef.current = new SignalingHost(
       newCode,
       roomName,
@@ -112,6 +117,14 @@ export default function HostView({ onSelectTab }) {
         },
       }
     );
+
+    // Automatically prompt or start the selected audio source inside the gesture
+    try {
+      await handleStartAudioStream(selectedSource);
+    } catch (e) {
+      // If user cancelled browser screen share dialog, room remains open ready for them to retry
+      console.log('[Host View] Initial audio source selection note:', e.message);
+    }
   };
 
   // 2. Start Audio Stream (Tab/Screen or other sources)
@@ -132,7 +145,7 @@ export default function HostView({ onSelectTab }) {
         setIsStreaming(true);
         setSelectedSource(sourceType);
 
-        // Update WebRTC track for all listeners
+        // Update WebRTC track and broadcast state for all listeners
         if (signalingHostRef.current) {
           signalingHostRef.current.updateAudioTrack(stream);
           signalingHostRef.current.setAudioState(true, sourceType);
@@ -140,7 +153,10 @@ export default function HostView({ onSelectTab }) {
       }
     } catch (err) {
       console.error('Audio start error:', err);
-      setErrorMsg(err.message || 'Could not start audio stream.');
+      // Don't show scary error if user simply closed screen picker dialog
+      if (err.name !== 'NotAllowedError') {
+        setErrorMsg(err.message || 'Could not start audio stream.');
+      }
     }
   };
 
@@ -149,21 +165,23 @@ export default function HostView({ onSelectTab }) {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setErrorMsg('');
     try {
       const stream = await audioEngine.playAudioFile(file, true);
-      setIsStreaming(true);
-      setSelectedSource('file');
-
-      if (signalingHostRef.current) {
-        signalingHostRef.current.updateAudioTrack(stream);
-        signalingHostRef.current.setAudioState(true, 'file');
+      if (stream) {
+        setIsStreaming(true);
+        setSelectedSource('file');
+        if (signalingHostRef.current) {
+          signalingHostRef.current.updateAudioTrack(stream);
+          signalingHostRef.current.setAudioState(true, 'file');
+        }
       }
     } catch (err) {
-      setErrorMsg('Error reading audio file: ' + err.message);
+      setErrorMsg('Failed to play local audio file: ' + err.message);
     }
   };
 
-  // Stop Audio Stream
+  // Stop broadcasting audio
   const handleStopAudioStream = () => {
     audioEngine.stopAll();
     setIsStreaming(false);
@@ -172,30 +190,46 @@ export default function HostView({ onSelectTab }) {
     }
   };
 
-  // Stop Entire Hosting Session
+  // Close session completely
   const handleCloseSession = () => {
-    handleStopAudioStream();
     if (signalingHostRef.current) {
       signalingHostRef.current.destroy();
       signalingHostRef.current = null;
     }
+    audioEngine.stopAll();
     setIsHosting(false);
-    setRoomCode('');
+    setIsStreaming(false);
     setConnectedListeners([]);
+    setRoomCode('');
   };
 
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(getJoinUrl());
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
+    const url = getJoinUrl();
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(() => {
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 2000);
+      });
+    }
+  };
+
+  const handleVolumeChange = (newVol) => {
+    setVolume(newVol);
+    audioEngine.setVolume(newVol);
+  };
+
+  const handleToggleMute = () => {
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+    audioEngine.setMuted(nextMuted);
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-4 sm:py-8 space-y-8">
-      {/* Title Header matching Sketch 2 */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-theme-border gap-4">
+    <div className="max-w-4xl mx-auto space-y-8 animate-fade-in pb-12">
+      {/* View Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono font-bold bg-theme-accent text-theme-bg mb-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono font-bold bg-theme-accent/10 text-theme-accent border border-theme-accent/30 mb-2">
             <Radio className="w-3.5 h-3.5 animate-pulse" />
             <span>TRANSMITTER MODE</span>
           </div>
@@ -279,6 +313,70 @@ export default function HostView({ onSelectTab }) {
                 className="w-full px-4 py-3.5 rounded-2xl bg-theme-bg border border-theme-border text-theme-text font-medium text-base outline-none focus:border-theme-accent focus:ring-2 focus:ring-theme-accent/20 transition-all"
               />
             </div>
+
+            {/* Audio Source Preference Selector */}
+            <div className="pt-2">
+              <label className="block text-xs font-mono font-semibold uppercase text-theme-muted mb-2 tracking-wider">
+                Audio Source to Stream
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setSelectedSource('tab')}
+                  className={`p-3 rounded-2xl border text-left transition-all ${
+                    selectedSource === 'tab'
+                      ? 'border-theme-accent bg-theme-accent/15 text-theme-accent font-bold'
+                      : 'border-theme-border bg-theme-bg/60 text-theme-text hover:border-theme-borderHover'
+                  }`}
+                >
+                  <ScreenShare className="w-4 h-4 mb-1" />
+                  <div className="text-xs">Tab / Screen</div>
+                  <div className="text-[10px] text-theme-muted">System sound</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedSource('mic')}
+                  className={`p-3 rounded-2xl border text-left transition-all ${
+                    selectedSource === 'mic'
+                      ? 'border-theme-accent bg-theme-accent/15 text-theme-accent font-bold'
+                      : 'border-theme-border bg-theme-bg/60 text-theme-text hover:border-theme-borderHover'
+                  }`}
+                >
+                  <Mic className="w-4 h-4 mb-1" />
+                  <div className="text-xs">Microphone</div>
+                  <div className="text-[10px] text-theme-muted">Voice relay</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedSource('tone')}
+                  className={`p-3 rounded-2xl border text-left transition-all ${
+                    selectedSource === 'tone'
+                      ? 'border-theme-accent bg-theme-accent/15 text-theme-accent font-bold'
+                      : 'border-theme-border bg-theme-bg/60 text-theme-text hover:border-theme-borderHover'
+                  }`}
+                >
+                  <Activity className="w-4 h-4 mb-1" />
+                  <div className="text-xs">Latency Beep</div>
+                  <div className="text-[10px] text-theme-muted">Sync test pulse</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedSource('file')}
+                  className={`p-3 rounded-2xl border text-left transition-all ${
+                    selectedSource === 'file'
+                      ? 'border-theme-accent bg-theme-accent/15 text-theme-accent font-bold'
+                      : 'border-theme-border bg-theme-bg/60 text-theme-text hover:border-theme-borderHover'
+                  }`}
+                >
+                  <FileAudio className="w-4 h-4 mb-1" />
+                  <div className="text-xs">Audio File</div>
+                  <div className="text-[10px] text-theme-muted">MP3 / WAV file</div>
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Action Button from Sketch: "Share the audio (Tab/Screen) - Project to sound" */}
@@ -327,20 +425,49 @@ export default function HostView({ onSelectTab }) {
                 </p>
               </div>
 
-              {/* Connected Listeners Counter */}
-              <div className="p-4 rounded-2xl bg-theme-bg/80 border border-theme-border flex items-center gap-4">
-                <div className="w-12 h-12 rounded-xl bg-theme-accent/15 border border-theme-accent/40 text-theme-accent flex items-center justify-center">
-                  <Users className="w-6 h-6" />
-                </div>
-                <div>
-                  <div className="text-2xl font-bold font-mono text-theme-text">
-                    {connectedListeners.length}
+              {/* Status & Listeners Counter */}
+              <div className="flex items-center gap-4">
+                <div className="p-4 rounded-2xl bg-theme-bg/80 border border-theme-border flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-theme-accent/15 border border-theme-accent/40 text-theme-accent flex items-center justify-center">
+                    <Users className="w-6 h-6" />
                   </div>
-                  <div className="text-xs text-theme-muted font-medium">
-                    Connected Listeners
+                  <div>
+                    <div className="text-2xl font-bold font-mono text-theme-text">
+                      {connectedListeners.length}
+                    </div>
+                    <div className="text-xs text-theme-muted font-medium">
+                      Connected Devices
+                    </div>
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Live Streaming Status Badge */}
+            <div className="mt-5 pt-4 border-t border-theme-border flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className={`w-3 h-3 rounded-full ${isStreaming ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'}`} />
+                <span className="text-xs font-mono font-bold tracking-wider uppercase">
+                  {isStreaming ? (
+                    <span className="text-emerald-400">
+                      LIVE BROADCAST ACTIVE ({selectedSource.toUpperCase()})
+                    </span>
+                  ) : (
+                    <span className="text-amber-400">
+                      AUDIO PAUSED — SELECT SOURCE BELOW TO BROADCAST
+                    </span>
+                  )}
+                </span>
+              </div>
+
+              {isStreaming && (
+                <button
+                  onClick={handleStopAudioStream}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/30 transition-all"
+                >
+                  Pause Audio
+                </button>
+              )}
             </div>
           </div>
 
@@ -400,7 +527,7 @@ export default function HostView({ onSelectTab }) {
                 onChange={handleFileUpload}
               />
 
-              {/* Source 4: Latency Test Tone */}
+              {/* Source 4: Latency Beep Test */}
               <button
                 onClick={() => handleStartAudioStream('tone')}
                 className={`p-4 rounded-2xl border text-left transition-all ${
@@ -410,115 +537,84 @@ export default function HostView({ onSelectTab }) {
                 }`}
               >
                 <Activity className="w-5 h-5 mb-2" />
-                <div className="text-xs font-bold">Sync Test Tone</div>
-                <div className="text-[10px] text-theme-muted mt-0.5">Verify zero latency</div>
+                <div className="text-xs font-bold">Latency Beep</div>
+                <div className="text-[10px] text-theme-muted mt-0.5">Rhythmic sync pulse</div>
               </button>
-            </div>
-
-            {/* Stream Status Bar & Stop Action */}
-            <div className="flex items-center justify-between pt-2">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`w-3 h-3 rounded-full ${
-                    isStreaming ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'
-                  }`}
-                />
-                <span className="text-xs font-mono font-medium text-theme-text">
-                  {isStreaming ? `BROADCASTING LIVE (${selectedSource.toUpperCase()})` : 'STREAM PAUSED — SELECT SOURCE ABOVE'}
-                </span>
-              </div>
-
-              {isStreaming ? (
-                <button
-                  onClick={handleStopAudioStream}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-all"
-                >
-                  <StopCircle className="w-4 h-4" />
-                  <span>Stop Stream</span>
-                </button>
-              ) : (
-                <button
-                  onClick={() => handleStartAudioStream(selectedSource)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-theme-accent text-theme-bg hover:bg-theme-accentHover transition-all shadow-sm"
-                >
-                  <Play className="w-4 h-4" />
-                  <span>Start Audio Stream</span>
-                </button>
-              )}
             </div>
           </div>
 
-          {/* Master Spectrum Visualizer */}
+          {/* Live Audio Visualizer */}
           <AudioVisualizer
             analyserNode={audioEngine.getAnalyser()}
             isPlaying={isStreaming}
             height={110}
-            barsCount={54}
+            barsCount={50}
           />
 
-          {/* Connected Listeners List */}
+          {/* Volume Control */}
           <div className="rounded-3xl bg-theme-surface border border-theme-border p-6 shadow-xl space-y-4">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-bold font-display uppercase tracking-wider text-theme-text flex items-center gap-2">
-                <Users className="w-4 h-4 text-theme-accent" />
-                <span>Connected Devices ({connectedListeners.length})</span>
-              </h4>
-              <span className="text-xs font-mono text-theme-muted">
-                WiFi Peer-to-Peer
+            <div className="flex items-center justify-between text-xs font-mono">
+              <span className="text-theme-muted uppercase tracking-wider">
+                Host Broadcast Gain
+              </span>
+              <span className="text-theme-accent font-bold">
+                {isMuted ? 'MUTED' : `${Math.round(volume * 100)}%`}
               </span>
             </div>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={handleToggleMute}
+                className="p-3 rounded-2xl bg-theme-surfaceHover border border-theme-border text-theme-text hover:text-theme-accent transition-all"
+                title={isMuted ? 'Unmute' : 'Mute'}
+              >
+                {isMuted ? <VolumeX className="w-5 h-5 text-rose-400" /> : <Volume2 className="w-5 h-5" />}
+              </button>
+              <input
+                type="range"
+                min="0"
+                max="2.0"
+                step="0.05"
+                value={isMuted ? 0 : volume}
+                onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                className="flex-1 h-2 bg-theme-border rounded-lg appearance-none cursor-pointer accent-theme-accent"
+              />
+            </div>
+          </div>
 
-            {connectedListeners.length === 0 ? (
-              <div className="p-8 rounded-2xl bg-theme-bg/40 border border-dashed border-theme-border text-center">
-                <Wifi className="w-8 h-8 text-theme-muted/50 mx-auto mb-2" />
-                <p className="text-xs text-theme-muted font-medium">
-                  Waiting for devices to join on your WiFi...
-                </p>
-                <p className="text-[11px] text-theme-muted/70 mt-1">
-                  Open Sound Sync on another device or scan the QR code.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {connectedListeners.map((listener) => (
+          {/* Connected Listeners List */}
+          {connectedListeners.length > 0 && (
+            <div className="rounded-3xl bg-theme-surface border border-theme-border p-6 shadow-xl space-y-3">
+              <h4 className="text-xs font-mono uppercase tracking-wider text-theme-muted">
+                Active Receiver Devices ({connectedListeners.length})
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {connectedListeners.map((l) => (
                   <div
-                    key={listener.id}
-                    className="flex items-center justify-between p-3.5 rounded-2xl bg-theme-bg border border-theme-border"
+                    key={l.id}
+                    className="p-3 rounded-2xl bg-theme-bg/60 border border-theme-border flex items-center justify-between"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-theme-accent/15 border border-theme-accent/30 text-theme-accent flex items-center justify-center font-bold text-xs">
-                        {listener.deviceName.charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <div className="text-sm font-semibold text-theme-text">
-                          {listener.deviceName}
-                        </div>
-                        <div className="text-[10px] font-mono text-theme-muted flex items-center gap-2 mt-0.5">
-                          <span className="text-emerald-400">● Streaming</span>
-                          <span>•</span>
-                          <span>WiFi Latency: ~{listener.ping || 6}ms</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-mono font-bold px-2 py-1 rounded-md bg-theme-surface text-theme-accent border border-theme-border">
-                        ULTRA LOW LATENCY
+                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="text-sm font-semibold text-theme-text">
+                        {l.deviceName}
                       </span>
+                    </div>
+                    <div className="text-xs font-mono text-theme-accent font-bold">
+                      ~{l.ping || 6}ms
                     </div>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* QR Code Modal for Mobile Phone Connection */}
+      {/* QR Code Modal for Phone Users */}
       <QRCodeModal
         isOpen={isQrOpen}
         onClose={() => setIsQrOpen(false)}
-        joinUrl={getJoinUrl()}
+        url={getJoinUrl()}
         roomCode={roomCode}
       />
     </div>
