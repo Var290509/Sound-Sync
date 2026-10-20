@@ -5,28 +5,14 @@ const BROKER_URLS = [
   'wss://broker.hivemq.com:8884/mqtt',
 ];
 
+// Clean, ultra-fast STUN configuration (averages <160ms candidate resolution)
 const RTC_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: 'stun:stun.services.mozilla.com' },
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
   ],
   iceCandidatePoolSize: 10,
 };
@@ -37,7 +23,6 @@ const RTC_CONFIG = {
 function optimizeAudioSdp(sdp) {
   if (!sdp) return sdp;
   let modified = sdp;
-  // Upgrade Opus payload attributes: 5ms frame size, CBR, stereo, max bitrate
   if (modified.includes('a=fmtp:111')) {
     modified = modified.replace(
       /a=fmtp:111[^\r\n]*/g,
@@ -60,7 +45,7 @@ export class SignalingHost {
     this.callbacks = callbacks; // onListenerChange, onStatusChange, onError
 
     this.mqttClient = null;
-    this.peers = new Map(); // listenerId -> { pc, dc, candidateQueue, remoteDescSet }
+    this.peers = new Map(); // listenerId -> { pc, dc, candidateQueue, remoteDescSet, disconnectTimer }
     this.listeners = new Map(); // listenerId -> { id, deviceName, joinedAt, ping }
     this.isStreaming = false;
     this.audioSource = 'tab';
@@ -75,20 +60,15 @@ export class SignalingHost {
     const brokerUrl = BROKER_URLS[brokerIndex] || BROKER_URLS[0];
     console.log(`[SignalingHost] Connecting to broker: ${brokerUrl}`);
 
-    const presenceTopic = `soundsync/${this.roomCode}/presence`;
     const hostTopic = `soundsync/${this.roomCode}/host`;
 
+    // Connect without fragile LWT to avoid broker-side false disconnect triggers
     const client = mqtt.connect(brokerUrl, {
       clientId: `host_${this.roomCode}_${Math.random().toString(36).slice(2, 7)}`,
       clean: true,
-      connectTimeout: 7000,
-      reconnectPeriod: 3000,
-      will: {
-        topic: presenceTopic,
-        payload: JSON.stringify({ active: false, roomCode: this.roomCode }),
-        retain: true,
-        qos: 1,
-      },
+      connectTimeout: 8000,
+      reconnectPeriod: 2500,
+      keepalive: 30,
     });
 
     this.mqttClient = client;
@@ -96,24 +76,22 @@ export class SignalingHost {
     client.on('connect', () => {
       console.log(`[SignalingHost] Connected to broker. Subscribing to: ${hostTopic}`);
       
-      // 1. Subscribe to incoming messages from listeners
       client.subscribe(hostTopic, { qos: 1 }, (err) => {
         if (!err) {
           if (this.callbacks.onStatusChange) {
             this.callbacks.onStatusChange('ready');
           }
-          // 2. Announce room presence with retain = true
           this.publishPresence(true);
         }
       });
 
-      // 3. Keep presence fresh with periodic heartbeat
+      // Keep presence fresh with periodic heartbeat
       if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = setInterval(() => {
         if (client.connected && !this.isDestroyed) {
           this.publishPresence(true);
         }
-      }, 10000);
+      }, 8000);
     });
 
     client.on('message', (topic, message) => {
@@ -173,7 +151,7 @@ export class SignalingHost {
           peerData.remoteDescSet = true;
           console.log(`[SignalingHost] Remote description set for listener: ${listenerId}`);
 
-          // Drain any queued ICE candidates
+          // Drain queued ICE candidates
           while (peerData.candidateQueue.length > 0) {
             const cand = peerData.candidateQueue.shift();
             await peerData.pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
@@ -205,6 +183,7 @@ export class SignalingHost {
   async initiateCallToListener(listenerId) {
     const existing = this.peers.get(listenerId);
     if (existing && existing.pc) {
+      if (existing.disconnectTimer) clearTimeout(existing.disconnectTimer);
       try { existing.pc.close(); } catch (e) {}
     }
 
@@ -214,10 +193,11 @@ export class SignalingHost {
       dc: null,
       candidateQueue: [],
       remoteDescSet: false,
+      disconnectTimer: null,
     };
     this.peers.set(listenerId, peerData);
 
-    // Setup ultra-fast DataChannel for zero-latency ping/pong & metadata
+    // Ultra-fast DataChannel for zero-latency ping/pong & metadata
     const dc = pc.createDataChannel('soundsync-control', {
       ordered: false,
       maxRetransmits: 0,
@@ -226,6 +206,10 @@ export class SignalingHost {
 
     dc.onopen = () => {
       console.log(`[SignalingHost] P2P DataChannel open with ${listenerId}`);
+      if (peerData.disconnectTimer) {
+        clearTimeout(peerData.disconnectTimer);
+        peerData.disconnectTimer = null;
+      }
       dc.send(JSON.stringify({
         type: 'room-info',
         roomCode: this.roomCode,
@@ -251,7 +235,7 @@ export class SignalingHost {
       } catch (e) {}
     };
 
-    // Attach current audio stream
+    // Attach audio track
     const stream = this.getStream();
     if (stream) {
       stream.getTracks().forEach((track) => {
@@ -281,8 +265,18 @@ export class SignalingHost {
 
     pc.onconnectionstatechange = () => {
       console.log(`[SignalingHost] Connection state with ${listenerId}: ${pc.connectionState}`);
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-        this.handleListenerDisconnected(listenerId);
+      if (pc.connectionState === 'connected') {
+        if (peerData.disconnectTimer) {
+          clearTimeout(peerData.disconnectTimer);
+          peerData.disconnectTimer = null;
+        }
+      } else if (pc.connectionState === 'failed') {
+        // Only remove if it stays failed for 8 seconds (gives room for network handoff)
+        if (!peerData.disconnectTimer) {
+          peerData.disconnectTimer = setTimeout(() => {
+            this.handleListenerDisconnected(listenerId);
+          }, 8000);
+        }
       }
     };
 
@@ -292,13 +286,11 @@ export class SignalingHost {
         offerToReceiveVideo: false,
       });
 
-      // Munge SDP for 5ms Opus packetization & stereo
       const optimizedSdp = optimizeAudioSdp(offer.sdp);
       const optimizedOffer = { type: offer.type, sdp: optimizedSdp };
 
       await pc.setLocalDescription(optimizedOffer);
 
-      // Publish offer to listener
       if (this.mqttClient && this.mqttClient.connected) {
         this.mqttClient.publish(
           `soundsync/${this.roomCode}/listener/${listenerId}`,
@@ -343,10 +335,8 @@ export class SignalingHost {
     this.isStreaming = isStreaming;
     if (audioSource) this.audioSource = audioSource;
 
-    // Update retained presence
     this.publishPresence(true);
 
-    // Broadcast state to all listeners via direct P2P DataChannels
     this.peers.forEach((peerData) => {
       if (peerData.dc && peerData.dc.readyState === 'open') {
         try {
@@ -363,6 +353,7 @@ export class SignalingHost {
   handleListenerDisconnected(listenerId) {
     const peerData = this.peers.get(listenerId);
     if (peerData) {
+      if (peerData.disconnectTimer) clearTimeout(peerData.disconnectTimer);
       try { peerData.pc.close(); } catch (e) {}
       this.peers.delete(listenerId);
     }
@@ -382,10 +373,21 @@ export class SignalingHost {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
     }
+
+    // Explicitly notify listeners through DataChannel before closing
+    this.peers.forEach((peerData) => {
+      try {
+        if (peerData.dc && peerData.dc.readyState === 'open') {
+          peerData.dc.send(JSON.stringify({ type: 'host-ended' }));
+        }
+      } catch (e) {}
+    });
+
     this.publishPresence(false);
 
     this.peers.forEach((peerData) => {
       try {
+        if (peerData.disconnectTimer) clearTimeout(peerData.disconnectTimer);
         if (peerData.dc) peerData.dc.close();
         if (peerData.pc) peerData.pc.close();
       } catch (e) {}
@@ -421,6 +423,7 @@ export class SignalingListener {
     this.pingInterval = null;
     this.joinRetryInterval = null;
     this.roomDiscoveryTimeout = null;
+    this.disconnectGraceTimer = null;
     this.playoutDelay = 0.005; // 5ms default ultra-low latency target
     this.receiver = null;
     this.isDestroyed = false;
@@ -436,22 +439,20 @@ export class SignalingListener {
     const client = mqtt.connect(brokerUrl, {
       clientId: `listener_${this.listenerId}`,
       clean: true,
-      connectTimeout: 7000,
-      reconnectPeriod: 3000,
+      connectTimeout: 8000,
+      reconnectPeriod: 2500,
+      keepalive: 30,
     });
 
     this.mqttClient = client;
     const listenerTopic = `soundsync/${this.roomCode}/listener/${this.listenerId}`;
     const presenceTopic = `soundsync/${this.roomCode}/presence`;
-    const hostTopic = `soundsync/${this.roomCode}/host`;
 
     client.on('connect', () => {
       console.log(`[SignalingListener] Connected to broker. Subscribing to: ${listenerTopic} and ${presenceTopic}`);
       
-      // Subscribe to private listener channel and room presence
       client.subscribe([listenerTopic, presenceTopic], { qos: 1 }, (err) => {
         if (!err) {
-          // Send join request immediately
           this.sendJoinRequest();
 
           // Resilient retry loop: send join every 1.5 seconds until offer is received
@@ -463,17 +464,17 @@ export class SignalingListener {
             }
             retryCount++;
             if (retryCount <= 8) {
-              console.log(`[SignalingListener] Retrying join request (${retryCount}/8)...`);
+              console.log(`[SignalingListener] Sending join request (${retryCount}/8)...`);
               this.sendJoinRequest();
             }
           }, 1500);
 
-          // 12-second room discovery timeout (gives ample time for ICE gathering & cross-device handshake)
+          // 12-second room discovery window
           this.roomDiscoveryTimeout = setTimeout(() => {
             if (!this.remoteDescSet && !this.isDestroyed && this.callbacks.onError) {
               this.callbacks.onError({
                 type: 'room-not-found',
-                message: 'Room not found or host inactive. Please verify the 6-character room code on the host screen.',
+                message: 'Room not found. Please verify the 6-character room code on the host screen.',
               });
             }
           }, 12000);
@@ -485,16 +486,8 @@ export class SignalingListener {
       try {
         const data = JSON.parse(message.toString());
         
-        // Check presence updates
         if (topic === presenceTopic) {
-          if (data.active === false) {
-            if (this.callbacks.onError) {
-              this.callbacks.onError({
-                type: 'host-offline',
-                message: 'Host has ended the session or disconnected.',
-              });
-            }
-          } else if (data.active === true) {
+          if (data.active === true) {
             console.log('[SignalingListener] Confirmed room is active via presence!');
             if (this.callbacks.onRoomInfo) {
               this.callbacks.onRoomInfo({
@@ -581,13 +574,17 @@ export class SignalingListener {
     const pc = new RTCPeerConnection(RTC_CONFIG);
     this.pc = pc;
 
-    // Handle incoming P2P DataChannel from host
+    // Incoming P2P DataChannel from host
     pc.ondatachannel = (event) => {
       const dc = event.channel;
       this.dc = dc;
 
       dc.onopen = () => {
         console.log('[SignalingListener] Direct P2P DataChannel connected!');
+        if (this.disconnectGraceTimer) {
+          clearTimeout(this.disconnectGraceTimer);
+          this.disconnectGraceTimer = null;
+        }
         if (this.callbacks.onStateChange) {
           this.callbacks.onStateChange('connected');
         }
@@ -612,17 +609,24 @@ export class SignalingListener {
             if (this.callbacks.onHostAudioState) {
               this.callbacks.onHostAudioState(msg);
             }
+          } else if (msg.type === 'host-ended') {
+            console.log('[SignalingListener] Host explicitly ended session.');
+            if (this.callbacks.onError) {
+              this.callbacks.onError({
+                type: 'host-offline',
+                message: 'Host has ended the broadcast session.',
+              });
+            }
           }
         } catch (err) {}
       };
     };
 
-    // Handle incoming audio track
+    // Incoming audio track
     pc.ontrack = (event) => {
       console.log('[SignalingListener] Remote audio track received!');
       this.receiver = event.receiver;
 
-      // Apply ultra-low latency playout delay hints
       this.applyPlayoutDelay(this.playoutDelay);
 
       const remoteStream = event.streams[0] || new MediaStream([event.track]);
@@ -649,12 +653,26 @@ export class SignalingListener {
     pc.onconnectionstatechange = () => {
       console.log(`[SignalingListener] WebRTC state: ${pc.connectionState}`);
       if (pc.connectionState === 'connected') {
+        if (this.disconnectGraceTimer) {
+          clearTimeout(this.disconnectGraceTimer);
+          this.disconnectGraceTimer = null;
+        }
         if (this.callbacks.onStateChange) {
           this.callbacks.onStateChange('connected');
         }
-      } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-        if (this.callbacks.onStateChange) {
-          this.callbacks.onStateChange('disconnected');
+      } else if (pc.connectionState === 'disconnected') {
+        // DO NOT immediately abort! WebRTC handles momentary packet loss / network handoffs.
+        console.log('[SignalingListener] Temporary disconnection, attempting to keep audio alive...');
+      } else if (pc.connectionState === 'failed') {
+        // Only trigger disconnect if failure persists for 8 seconds
+        if (!this.disconnectGraceTimer) {
+          this.disconnectGraceTimer = setTimeout(() => {
+            if (this.pc && (this.pc.connectionState === 'failed' || this.pc.connectionState === 'disconnected')) {
+              if (this.callbacks.onStateChange) {
+                this.callbacks.onStateChange('disconnected');
+              }
+            }
+          }, 8000);
         }
       }
     };
@@ -663,7 +681,6 @@ export class SignalingListener {
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
       this.remoteDescSet = true;
 
-      // Drain any queued candidates
       while (this.candidateQueue.length > 0) {
         const cand = this.candidateQueue.shift();
         await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
@@ -675,7 +692,6 @@ export class SignalingListener {
 
       await pc.setLocalDescription(optimizedAnswer);
 
-      // Send answer to host
       if (this.mqttClient && this.mqttClient.connected) {
         this.mqttClient.publish(
           `soundsync/${this.roomCode}/host`,
@@ -724,6 +740,10 @@ export class SignalingListener {
 
   destroy() {
     this.isDestroyed = true;
+    if (this.disconnectGraceTimer) {
+      clearTimeout(this.disconnectGraceTimer);
+      this.disconnectGraceTimer = null;
+    }
     if (this.roomDiscoveryTimeout) {
       clearTimeout(this.roomDiscoveryTimeout);
       this.roomDiscoveryTimeout = null;

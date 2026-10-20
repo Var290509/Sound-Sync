@@ -44,6 +44,21 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
   const analyserRef = useRef(null);
   const mediaStreamSourceRef = useRef(null);
 
+  // Screen Wake Lock while connected to prevent mobile screen sleep & CPU throttling
+  useEffect(() => {
+    let wakeLock = null;
+    if (isConnected && 'wakeLock' in navigator) {
+      navigator.wakeLock.request('screen').then((wl) => {
+        wakeLock = wl;
+      }).catch(() => {});
+    }
+    return () => {
+      if (wakeLock) {
+        wakeLock.release().catch(() => {});
+      }
+    };
+  }, [isConnected]);
+
   // Clean up listener on unmount or tab close
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -241,6 +256,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
           if (state === 'connected') {
             setIsConnected(true);
             setIsConnecting(false);
+            setErrorMsg('');
           } else if (state === 'disconnected') {
             setErrorMsg('Host has disconnected or ended the stream.');
             handleDisconnect();

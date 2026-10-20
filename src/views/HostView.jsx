@@ -53,6 +53,21 @@ export default function HostView({ onSelectTab }) {
   const signalingHostRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  // Screen Wake Lock while hosting to prevent laptop/phone sleep & WebSocket throttling
+  useEffect(() => {
+    let wakeLock = null;
+    if (isHosting && 'wakeLock' in navigator) {
+      navigator.wakeLock.request('screen').then((wl) => {
+        wakeLock = wl;
+      }).catch(() => {});
+    }
+    return () => {
+      if (wakeLock) {
+        wakeLock.release().catch(() => {});
+      }
+    };
+  }, [isHosting]);
+
   // Clean up host on unmount or tab close
   useEffect(() => {
     const handleBeforeUnload = () => {
