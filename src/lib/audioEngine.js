@@ -196,7 +196,7 @@ class AudioEngine {
   }
 
   // 4. Start Latency Test Tone (Rhythmic Beeps for measuring physical latency)
-  async startTestTone() {
+  async startTestTone(playLocally = true) {
     await this.initContext();
     this.cleanupCurrentSources();
 
@@ -224,6 +224,11 @@ class AudioEngine {
 
     osc.connect(pulseGain);
     pulseGain.connect(this.gainNode);
+    if (playLocally) {
+      try {
+        this.gainNode.connect(this.audioCtx.destination);
+      } catch (e) {}
+    }
     osc.start();
 
     this.oscillator = osc;
@@ -231,6 +236,11 @@ class AudioEngine {
   }
 
   cleanupCurrentSources() {
+    if (this.gainNode && this.audioCtx) {
+      try {
+        this.gainNode.disconnect(this.audioCtx.destination);
+      } catch (e) {}
+    }
     if (this.currentStream) {
       this.currentStream.getTracks().forEach((t) => t.stop());
       this.currentStream = null;

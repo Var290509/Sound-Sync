@@ -42,6 +42,22 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
 
+  // Clean up peer on unmount or tab close
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (peerListenerRef.current) {
+        peerListenerRef.current.destroy();
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      if (peerListenerRef.current) {
+        peerListenerRef.current.destroy();
+      }
+    };
+  }, []);
+
   // Check URL query parameters for auto-fill room code (e.g. when scanned from QR code)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -72,8 +88,12 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
 
       const source = ctx.createMediaStreamSource(stream);
       source.connect(analyser);
-      // NOTE: Analyser is strictly for visualization.
-      // Physical playback is handled by <audio autoPlay playsInline> to guarantee zero echo/collisions.
+
+      // Connect analyser to a zero-gain node on ctx.destination so browser never puts Web Audio graph to sleep
+      const nullGain = ctx.createGain();
+      nullGain.gain.value = 0;
+      analyser.connect(nullGain);
+      nullGain.connect(ctx.destination);
 
       analyserRef.current = analyser;
     } catch (e) {
@@ -148,6 +168,8 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
           setAudioStream(stream);
 
           if (audioElementRef.current) {
+            audioElementRef.current.removeAttribute('src');
+            audioElementRef.current.src = '';
             audioElementRef.current.srcObject = stream;
             audioElementRef.current.volume = isMuted ? 0 : Math.min(1.0, volume);
             audioElementRef.current.play().then(() => {

@@ -1,4 +1,6 @@
-import Peer from 'peerjs';
+import PeerPackage from 'peerjs';
+
+const Peer = typeof PeerPackage === 'function' ? PeerPackage : (PeerPackage?.Peer || PeerPackage?.default || PeerPackage);
 
 const PEER_CONFIG = {
   host: '0.peerjs.com',

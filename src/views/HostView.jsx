@@ -50,6 +50,22 @@ export default function HostView({ onSelectTab }) {
   const peerHostRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  // Clean up peer on unmount or tab close
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (peerHostRef.current) {
+        peerHostRef.current.destroy();
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      if (peerHostRef.current) {
+        peerHostRef.current.destroy();
+      }
+    };
+  }, []);
+
   // Construct shareable link for mobile phones
   const getJoinUrl = () => {
     if (typeof window === 'undefined') return '';
