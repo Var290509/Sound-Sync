@@ -307,11 +307,26 @@ export class PeerListener {
     const hostPeerId = `soundsync-${this.roomCode}`;
     console.log(`[PeerListener] Connecting to Host: ${hostPeerId}...`);
 
+    this.connectionTimeout = setTimeout(() => {
+      if (!this.hostConn || !this.hostConn.open) {
+        if (this.callbacks.onError) {
+          this.callbacks.onError({
+            type: 'timeout',
+            message: 'Connection timed out. Please verify that the Host is active and connected to WiFi.',
+          });
+        }
+      }
+    }, 12000);
+
     this.hostConn = this.peer.connect(hostPeerId, {
       metadata: { deviceName: this.deviceName },
     });
 
     this.hostConn.on('open', () => {
+      if (this.connectionTimeout) {
+        clearTimeout(this.connectionTimeout);
+        this.connectionTimeout = null;
+      }
       console.log('[PeerListener] Connected to Host DataChannel successfully!');
       if (this.callbacks.onStateChange) {
         this.callbacks.onStateChange('connected');
@@ -388,6 +403,10 @@ export class PeerListener {
   }
 
   destroy() {
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+      this.connectionTimeout = null;
+    }
     if (this.pingInterval) {
       clearInterval(this.pingInterval);
       this.pingInterval = null;
