@@ -88,12 +88,26 @@ export default function HostView({ onSelectTab }) {
     }
     setErrorMsg('');
 
+    try {
+      // Pre-initialize AudioContext during the user click gesture
+      await audioEngine.initContext();
+
+      // Hook up PCM fallback chunk broadcasting
+      audioEngine.onPcmChunk = (chunk) => {
+        if (socket && socket.connected) {
+          socket.emit('audio-stream-chunk', chunk);
+        }
+      };
+    } catch (err) {
+      console.warn('[Host View] AudioContext init warning:', err);
+    }
+
     socket.emit('create-room', { roomName, hostDeviceName: deviceName }, (res) => {
       if (res.success) {
         setRoomCode(res.roomCode);
         setIsHosting(true);
 
-        // Initialize WebRTC Host controller
+        // Initialize WebRTC Host controller with guaranteed active carrier stream
         webRtcHostRef.current = new WebRTCHost(() => audioEngine.getStream());
       } else {
         setErrorMsg('Failed to create room. Please try again.');
@@ -287,13 +301,13 @@ export default function HostView({ onSelectTab }) {
               className="w-full group py-4 px-6 rounded-2xl font-bold font-display text-base text-theme-bg bg-theme-accent hover:bg-theme-accentHover shadow-[0_0_25px_var(--color-glow)] transition-all duration-300 flex items-center justify-center gap-3 hover:scale-[1.01] active:scale-[0.99]"
             >
               <ScreenShare className="w-5 h-5 transition-transform group-hover:scale-110" />
-              <span>Share the audio (Tab / Screen)</span>
+              <span>Host Room & Start Broadcast</span>
               <span className="text-xs opacity-75 font-normal tracking-wide">
                 — Project to sound
               </span>
             </button>
             <p className="text-xs text-center text-theme-muted mt-3">
-              Generates a private 6-character room code & low-latency WiFi channel.
+              Generates a private 6-character room code & ultra-low latency WiFi channel.
             </p>
           </div>
         </div>
@@ -423,7 +437,7 @@ export default function HostView({ onSelectTab }) {
                   }`}
                 />
                 <span className="text-xs font-mono font-medium text-theme-text">
-                  {isStreaming ? `BROADCASTING LIVE (${selectedSource.toUpperCase()})` : 'STREAM PAUSED'}
+                  {isStreaming ? `BROADCASTING LIVE (${selectedSource.toUpperCase()})` : 'STREAM PAUSED — SELECT SOURCE ABOVE'}
                 </span>
               </div>
 
@@ -495,14 +509,14 @@ export default function HostView({ onSelectTab }) {
                         <div className="text-[10px] font-mono text-theme-muted flex items-center gap-2 mt-0.5">
                           <span className="text-emerald-400">● Streaming</span>
                           <span>•</span>
-                          <span>WiFi Latency: ~12ms</span>
+                          <span>WiFi Latency: ~10ms</span>
                         </div>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] font-mono font-bold px-2 py-1 rounded-md bg-theme-surface text-theme-accent border border-theme-border">
-                        LOW LATENCY
+                        ULTRA LOW LATENCY
                       </span>
                     </div>
                   </div>

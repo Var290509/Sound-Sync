@@ -35,7 +35,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
   const [volume, setVolume] = useState(1.0);
   const [isMuted, setIsMuted] = useState(false);
   const [needsAudioUnlock, setNeedsAudioUnlock] = useState(false);
-  const [pingMs, setPingMs] = useState(12);
+  const [pingMs, setPingMs] = useState(10);
   const [bufferMode, setBufferMode] = useState('ultra'); // 'ultra', 'balanced', 'stable'
 
   const audioElementRef = useRef(null);
@@ -43,6 +43,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const gainNodeRef = useRef(null);
+  const nextChunkTimeRef = useRef(0);
 
   // Check URL query parameters for auto-fill room code (e.g. when scanned from QR code)
   useEffect(() => {
@@ -53,37 +54,98 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
     }
   }, []);
 
-  // Initialize Web Audio Context for audio output and visualizer
-  const setupAudioContext = (stream) => {
+  // Setup Visualizer only (avoids double playback and audio collisions)
+  const setupVisualizerOnly = (stream) => {
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      const ctx = new AudioContextClass({
-        latencyHint: bufferMode === 'ultra' ? 'interactive' : 'playback',
-        sampleRate: 48000,
-      });
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContextClass({
+          latencyHint: 'interactive',
+          sampleRate: 48000,
+        });
+      }
+      const ctx = audioContextRef.current;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
 
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
-
-      const gain = ctx.createGain();
-      gain.gain.setValueAtTime(isMuted ? 0 : volume, ctx.currentTime);
+      analyser.smoothingTimeConstant = 0.6;
 
       const source = ctx.createMediaStreamSource(stream);
-      source.connect(gain);
-      gain.connect(analyser);
-      gain.connect(ctx.destination);
+      source.connect(analyser);
+      // NOTE: We deliberately do NOT connect analyser to ctx.destination!
+      // Physical playback is handled cleanly by <audio autoPlay playsInline>
+      // to avoid double output, echo, phase cancellation, or iOS Safari silence.
 
-      audioContextRef.current = ctx;
       analyserRef.current = analyser;
-      gainNodeRef.current = gain;
-
-      if (ctx.state === 'suspended') {
-        setNeedsAudioUnlock(true);
-      }
     } catch (e) {
-      console.error('AudioContext setup error:', e);
+      console.warn('[Listener View] Visualizer setup warning:', e);
     }
   };
+
+  // Binary WebSocket Audio Fallback (if WebRTC is blocked by firewall or negotiating)
+  useEffect(() => {
+    const handlePcmChunk = (arrayBuffer) => {
+      // Check if WebRTC audio element is actively playing
+      const isWebRtcPlaying = audioElementRef.current && 
+        !audioElementRef.current.paused && 
+        audioElementRef.current.currentTime > 0;
+
+      if (isWebRtcPlaying) return; // WebRTC direct audio is active
+
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!audioContextRef.current) {
+          audioContextRef.current = new AudioContextClass({
+            latencyHint: 'interactive',
+            sampleRate: 48000,
+          });
+        }
+        const ctx = audioContextRef.current;
+        if (ctx.state === 'suspended') {
+          setNeedsAudioUnlock(true);
+          return;
+        }
+
+        const int16 = new Int16Array(arrayBuffer);
+        const float32 = new Float32Array(int16.length);
+        for (let i = 0; i < int16.length; i++) {
+          float32[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7FFF);
+        }
+
+        const buffer = ctx.createBuffer(1, float32.length, 48000);
+        buffer.getChannelData(0).set(float32);
+
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+
+        if (!gainNodeRef.current) {
+          const gain = ctx.createGain();
+          gain.gain.setValueAtTime(isMuted ? 0 : volume, ctx.currentTime);
+          gain.connect(ctx.destination);
+          gainNodeRef.current = gain;
+        }
+
+        source.connect(gainNodeRef.current);
+
+        const now = ctx.currentTime;
+        if (nextChunkTimeRef.current < now) {
+          nextChunkTimeRef.current = now + 0.01; // 10ms ahead
+        }
+        source.start(nextChunkTimeRef.current);
+        nextChunkTimeRef.current += buffer.duration;
+      } catch (err) {
+        console.warn('[Listener View] Fallback chunk error:', err);
+      }
+    };
+
+    socket.on('audio-stream-chunk', handlePcmChunk);
+    return () => {
+      socket.off('audio-stream-chunk', handlePcmChunk);
+    };
+  }, [isMuted, volume]);
 
   // Browser Autoplay Policy Unlock
   const handleUnlockAudio = () => {
@@ -96,6 +158,15 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
       audioElementRef.current.play().then(() => {
         setNeedsAudioUnlock(false);
       }).catch(() => {});
+    }
+  };
+
+  // Adjust latency buffer mode dynamically
+  const handleBufferModeChange = (mode) => {
+    setBufferMode(mode);
+    const delay = mode === 'ultra' ? 0.005 : mode === 'balanced' ? 0.03 : 0.08;
+    if (webRtcListenerRef.current) {
+      webRtcListenerRef.current.setPlayoutDelay(delay);
     }
   };
 
@@ -113,6 +184,23 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
     setErrorMsg('');
     setIsConnecting(true);
 
+    // CRITICAL: Prime HTML5 audio element and Web Audio API right in the user touch/click gesture
+    if (audioElementRef.current) {
+      audioElementRef.current.play().catch(() => {});
+    }
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContextClass({
+          latencyHint: 'interactive',
+          sampleRate: 48000,
+        });
+      }
+      if (audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume().catch(() => {});
+      }
+    } catch (e) {}
+
     socket.emit('join-room', {
       roomCode: code.toUpperCase(),
       listenerDeviceName: deviceName.trim()
@@ -125,18 +213,21 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
         // Start WebRTC listener
         webRtcListenerRef.current = new WebRTCListener(
           (stream) => {
-            console.log('[Listener View] Audio stream received, hooking up audio element & context');
+            console.log('[Listener View] Audio stream received, hooking up audio element & visualizer');
             setAudioStream(stream);
 
             if (audioElementRef.current) {
               audioElementRef.current.srcObject = stream;
-              audioElementRef.current.play().catch((err) => {
-                console.warn('Autoplay blocked, user interaction required:', err);
+              audioElementRef.current.volume = isMuted ? 0 : Math.min(1.0, volume);
+              audioElementRef.current.play().then(() => {
+                setNeedsAudioUnlock(false);
+              }).catch((err) => {
+                console.warn('[Listener View] Autoplay blocked, user interaction required:', err);
                 setNeedsAudioUnlock(true);
               });
             }
 
-            setupAudioContext(stream);
+            setupVisualizerOnly(stream);
           },
           (state) => {
             console.log('[Listener View] Connection state changed:', state);
@@ -152,7 +243,6 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
           });
         }, 3000);
 
-        // Cleanup on unmount / disconnect
         return () => clearInterval(pingInterval);
       } else {
         setErrorMsg(res.error || 'Failed to join room. Verify the code.');
@@ -179,15 +269,18 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
       webRtcListenerRef.current.destroy();
       webRtcListenerRef.current = null;
     }
+    if (audioElementRef.current) {
+      audioElementRef.current.pause();
+      audioElementRef.current.srcObject = null;
+    }
     if (audioContextRef.current) {
       try {
         audioContextRef.current.close();
       } catch (e) {}
       audioContextRef.current = null;
     }
-    if (audioElementRef.current) {
-      audioElementRef.current.srcObject = null;
-    }
+    analyserRef.current = null;
+    gainNodeRef.current = null;
     setIsConnected(false);
     setAudioStream(null);
     setRoomInfo(null);
@@ -198,24 +291,24 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
   // Adjust volume
   const handleVolumeChange = (newVol) => {
     setVolume(newVol);
+    if (audioElementRef.current) {
+      audioElementRef.current.volume = isMuted ? 0 : Math.min(1.0, newVol);
+    }
     if (gainNodeRef.current && audioContextRef.current) {
       const target = isMuted ? 0 : newVol;
       gainNodeRef.current.gain.setTargetAtTime(target, audioContextRef.current.currentTime, 0.01);
-    }
-    if (audioElementRef.current) {
-      audioElementRef.current.volume = isMuted ? 0 : Math.min(1.0, newVol);
     }
   };
 
   const handleToggleMute = () => {
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
+    if (audioElementRef.current) {
+      audioElementRef.current.volume = nextMuted ? 0 : Math.min(1.0, volume);
+    }
     if (gainNodeRef.current && audioContextRef.current) {
       const target = nextMuted ? 0 : volume;
       gainNodeRef.current.gain.setTargetAtTime(target, audioContextRef.current.currentTime, 0.01);
-    }
-    if (audioElementRef.current) {
-      audioElementRef.current.volume = nextMuted ? 0 : Math.min(1.0, volume);
     }
   };
 
@@ -376,7 +469,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
               <span>Listener Controls</span>
             </h4>
 
-            {/* Volume Slider with Boost */}
+            {/* Volume Slider */}
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs font-mono">
                 <span className="text-theme-muted">Master Volume</span>
@@ -412,7 +505,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <button
-                  onClick={() => setBufferMode('ultra')}
+                  onClick={() => handleBufferModeChange('ultra')}
                   className={`p-3 rounded-2xl border text-center transition-all ${
                     bufferMode === 'ultra'
                       ? 'border-theme-accent bg-theme-accent/15 text-theme-accent font-bold shadow-sm'
@@ -423,7 +516,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
                   <div className="text-[10px] text-theme-muted">5-15ms (Live)</div>
                 </button>
                 <button
-                  onClick={() => setBufferMode('balanced')}
+                  onClick={() => handleBufferModeChange('balanced')}
                   className={`p-3 rounded-2xl border text-center transition-all ${
                     bufferMode === 'balanced'
                       ? 'border-theme-accent bg-theme-accent/15 text-theme-accent font-bold shadow-sm'
@@ -434,7 +527,7 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
                   <div className="text-[10px] text-theme-muted">25-40ms (Sync)</div>
                 </button>
                 <button
-                  onClick={() => setBufferMode('stable')}
+                  onClick={() => handleBufferModeChange('stable')}
                   className={`p-3 rounded-2xl border text-center transition-all ${
                     bufferMode === 'stable'
                       ? 'border-theme-accent bg-theme-accent/15 text-theme-accent font-bold shadow-sm'

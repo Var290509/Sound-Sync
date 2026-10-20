@@ -4,17 +4,42 @@ const RTC_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' }
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:stun.services.mozilla.com' }
   ],
   iceCandidatePoolSize: 10,
 };
 
 // Force ultra-low latency Opus settings in SDP
-function optimizeSdpForLowLatency(sdp) {
-  return sdp.replace(
-    /a=fmtp:(\d+) (.*)/g,
-    'a=fmtp:$1 $2;stereo=1;sprop-stereo=1;maxptime=10;minptime=10;useinbandfec=1'
-  );
+export function optimizeSdpForLowLatency(sdp) {
+  if (!sdp) return sdp;
+
+  // Find Opus payload type from rtpmap (e.g., "a=rtpmap:111 opus/48000/2")
+  const opusMatch = sdp.match(/a=rtpmap:(\d+)\s+opus\/48000\/2/i);
+  if (!opusMatch) return sdp;
+  const pt = opusMatch[1];
+
+  const targetParams = 'minptime=10;maxptime=10;ptime=10;cbr=1;stereo=1;sprop-stereo=1;usedtx=0;maxaveragebitrate=128000';
+
+  const fmtpRegex = new RegExp(`a=fmtp:${pt}\\s+(.*)`);
+  if (fmtpRegex.test(sdp)) {
+    sdp = sdp.replace(fmtpRegex, (match, existingParams) => {
+      const cleanParams = existingParams
+        .split(';')
+        .filter((p) => !/^(minptime|maxptime|ptime|cbr|stereo|sprop-stereo|usedtx|maxaveragebitrate)=/i.test(p.trim()))
+        .join(';');
+      return `a=fmtp:${pt} ${cleanParams ? cleanParams + ';' : ''}${targetParams}`;
+    });
+  } else {
+    // Insert a=fmtp right after a=rtpmap line
+    sdp = sdp.replace(
+      new RegExp(`(a=rtpmap:${pt}\\s+opus\\/48000\\/2\r?\n)`),
+      `$1a=fmtp:${pt} ${targetParams}\r\n`
+    );
+  }
+
+  return sdp;
 }
 
 /**
@@ -37,8 +62,10 @@ export class WebRTCHost {
       const pc = this.peers.get(senderId);
       if (pc) {
         try {
-          await pc.setRemoteDescription(new RTCSessionDescription(answer));
-          console.log('[WebRTC Host] Remote description set for listener:', senderId);
+          if (pc.signalingState === 'have-local-offer') {
+            await pc.setRemoteDescription(new RTCSessionDescription(answer));
+            console.log('[WebRTC Host] Remote description set for listener:', senderId);
+          }
         } catch (err) {
           console.error('[WebRTC Host] Error setting remote description:', err);
         }
@@ -68,7 +95,17 @@ export class WebRTCHost {
     const stream = this.getStream();
     if (stream) {
       stream.getTracks().forEach((track) => {
-        pc.addTrack(track, stream);
+        const sender = pc.addTrack(track, stream);
+        // Optimize sender encoding parameters if supported
+        try {
+          const params = sender.getParameters();
+          if (params.encodings && params.encodings[0]) {
+            params.encodings[0].maxBitrate = 128000;
+            params.encodings[0].networkPriority = 'high';
+            params.encodings[0].priority = 'high';
+            sender.setParameters(params).catch(() => {});
+          }
+        } catch (e) {}
       });
     }
 
@@ -111,18 +148,45 @@ export class WebRTCHost {
     }
   }
 
+  async renegotiate(listenerId) {
+    const pc = this.peers.get(listenerId);
+    if (!pc || pc.signalingState !== 'stable') return;
+
+    try {
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: false,
+        offerToReceiveVideo: false,
+      });
+      const optimizedSdp = optimizeSdpForLowLatency(offer.sdp);
+      const modifiedOffer = new RTCSessionDescription({
+        type: offer.type,
+        sdp: optimizedSdp,
+      });
+      await pc.setLocalDescription(modifiedOffer);
+      socket.emit('webrtc-offer', {
+        targetId: listenerId,
+        offer: modifiedOffer,
+      });
+    } catch (err) {
+      console.error(`[WebRTC Host] Renegotiation error with ${listenerId}:`, err);
+    }
+  }
+
   updateAudioTrack(newStream) {
     if (!newStream) return;
     const newTrack = newStream.getAudioTracks()[0];
     if (!newTrack) return;
 
-    this.peers.forEach((pc) => {
+    this.peers.forEach((pc, listenerId) => {
       const senders = pc.getSenders();
       const audioSender = senders.find((s) => s.track && s.track.kind === 'audio');
       if (audioSender) {
-        audioSender.replaceTrack(newTrack);
+        audioSender.replaceTrack(newTrack).catch((err) => {
+          console.warn('[WebRTC Host] replaceTrack error:', err);
+        });
       } else {
         pc.addTrack(newTrack, newStream);
+        this.renegotiate(listenerId);
       }
     });
   }
@@ -155,6 +219,8 @@ export class WebRTCListener {
     this.onConnectionStateChange = onConnectionStateChange;
     this.pc = null;
     this.remoteStream = null;
+    this.receiver = null;
+    this.playoutDelay = 0.005; // 5ms default ultra-low latency target
     this.setupSocketListeners();
   }
 
@@ -175,37 +241,57 @@ export class WebRTCListener {
     });
   }
 
-  async handleOffer(hostId, offer) {
-    if (this.pc) {
-      this.pc.close();
+  setPlayoutDelay(seconds) {
+    this.playoutDelay = seconds;
+    if (this.receiver) {
+      try {
+        if ('playoutDelayHint' in this.receiver) {
+          this.receiver.playoutDelayHint = seconds;
+        }
+        if ('jitterBufferTarget' in this.receiver) {
+          this.receiver.jitterBufferTarget = seconds;
+        }
+      } catch (e) {}
     }
+  }
 
-    this.pc = new RTCPeerConnection(RTC_CONFIG);
+  async handleOffer(hostId, offer) {
+    // If connection already exists and is stable, do renegotiation without destroying PC
+    if (!this.pc || this.pc.connectionState === 'closed' || this.pc.connectionState === 'failed') {
+      if (this.pc) this.pc.close();
 
-    this.pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        socket.emit('ice-candidate', {
-          targetId: hostId,
-          candidate: event.candidate,
-        });
-      }
-    };
+      this.pc = new RTCPeerConnection(RTC_CONFIG);
 
-    this.pc.ontrack = (event) => {
-      console.log('[WebRTC Listener] Received remote audio track!');
-      this.remoteStream = event.streams[0] || new MediaStream([event.track]);
-      if (typeof this.onTrackReceived === 'function') {
-        this.onTrackReceived(this.remoteStream);
-      }
-    };
+      this.pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit('ice-candidate', {
+            targetId: hostId,
+            candidate: event.candidate,
+          });
+        }
+      };
 
-    this.pc.onconnectionstatechange = () => {
-      const state = this.pc.connectionState;
-      console.log(`[WebRTC Listener] Connection state: ${state}`);
-      if (typeof this.onConnectionStateChange === 'function') {
-        this.onConnectionStateChange(state);
-      }
-    };
+      this.pc.ontrack = (event) => {
+        console.log('[WebRTC Listener] Received remote audio track!');
+        this.receiver = event.receiver;
+
+        // Apply ultra-low latency playout delay hints
+        this.setPlayoutDelay(this.playoutDelay);
+
+        this.remoteStream = event.streams[0] || new MediaStream([event.track]);
+        if (typeof this.onTrackReceived === 'function') {
+          this.onTrackReceived(this.remoteStream);
+        }
+      };
+
+      this.pc.onconnectionstatechange = () => {
+        const state = this.pc.connectionState;
+        console.log(`[WebRTC Listener] Connection state: ${state}`);
+        if (typeof this.onConnectionStateChange === 'function') {
+          this.onConnectionStateChange(state);
+        }
+      };
+    }
 
     try {
       await this.pc.setRemoteDescription(new RTCSessionDescription(offer));
@@ -232,6 +318,8 @@ export class WebRTCListener {
       this.pc.close();
       this.pc = null;
     }
+    this.receiver = null;
+    this.remoteStream = null;
     socket.off('webrtc-offer');
     socket.off('ice-candidate');
   }

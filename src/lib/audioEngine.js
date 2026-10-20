@@ -1,7 +1,7 @@
 /**
  * AudioEngine - Web Audio API coordinator for Sound Sync
  * Handles multi-source audio capture, 48kHz stereo processing,
- * low-latency scheduling, and real-time visualizer analysis.
+ * ultra-low-latency scheduling, and real-time visualizer analysis.
  */
 
 class AudioEngine {
@@ -12,15 +12,18 @@ class AudioEngine {
     this.currentStream = null;
     this.mediaStreamSource = null;
     this.streamDestination = null;
+    this.silentSource = null;
     this.fileSource = null;
     this.oscillator = null;
     this.isToneActive = false;
     this.volume = 1.0;
     this.isMuted = false;
+    this.onPcmChunk = null; // Callback for binary audio chunk fallback
+    this.processorNode = null;
   }
 
   // Ensure AudioContext is initialized and unlocked by user interaction
-  initContext() {
+  async initContext() {
     if (!this.audioCtx) {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       this.audioCtx = new AudioContextClass({
@@ -30,7 +33,7 @@ class AudioEngine {
 
       this.analyser = this.audioCtx.createAnalyser();
       this.analyser.fftSize = 256;
-      this.analyser.smoothingTimeConstant = 0.8;
+      this.analyser.smoothingTimeConstant = 0.6; // Snappier response
 
       this.gainNode = this.audioCtx.createGain();
       this.gainNode.gain.setValueAtTime(this.volume, this.audioCtx.currentTime);
@@ -40,12 +43,68 @@ class AudioEngine {
       // Chain: source -> gain -> analyser -> streamDestination
       this.gainNode.connect(this.analyser);
       this.analyser.connect(this.streamDestination);
+
+      // Attach continuous silent carrier so streamDestination.stream ALWAYS has an active audio track
+      this.startSilentCarrier();
+
+      // Setup PCM chunk processor for binary fallback streaming
+      this.setupPcmProcessor();
     }
 
     if (this.audioCtx.state === 'suspended') {
-      return this.audioCtx.resume();
+      await this.audioCtx.resume();
     }
-    return Promise.resolve();
+    return this.audioCtx;
+  }
+
+  // Creates a zero-volume continuous source to keep track active from second zero
+  startSilentCarrier() {
+    try {
+      const osc = this.audioCtx.createOscillator();
+      const silentGain = this.audioCtx.createGain();
+      silentGain.gain.setValueAtTime(0.0, this.audioCtx.currentTime); // 100% silent zero-amplitude carrier
+      osc.connect(silentGain);
+      silentGain.connect(this.streamDestination);
+      osc.start();
+      this.silentSource = osc;
+    } catch (e) {
+      console.warn('Silent carrier initialization warning:', e);
+    }
+  }
+
+  // Setup ScriptProcessor to sample audio chunks for WebSocket fallback streaming
+  setupPcmProcessor() {
+    try {
+      // Buffer size 1024 at 48kHz is ~21ms of audio (ultra-low latency)
+      const bufferSize = 1024;
+      const processor = this.audioCtx.createScriptProcessor(bufferSize, 1, 1);
+      this.analyser.connect(processor);
+      // ScriptProcessor requires connection to destination to fire onaudioprocess
+      const nullGain = this.audioCtx.createGain();
+      nullGain.gain.value = 0;
+      processor.connect(nullGain);
+      nullGain.connect(this.audioCtx.destination);
+
+      processor.onaudioprocess = (e) => {
+        if (typeof this.onPcmChunk === 'function') {
+          const inputData = e.inputBuffer.getChannelData(0);
+          // Convert Float32 to Int16 PCM for compact, fast network transfer
+          const pcm16 = new Int16Array(inputData.length);
+          let hasAudio = false;
+          for (let i = 0; i < inputData.length; i++) {
+            const s = Math.max(-1, Math.min(1, inputData[i]));
+            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            if (Math.abs(pcm16[i]) > 50) hasAudio = true;
+          }
+          if (hasAudio) {
+            this.onPcmChunk(pcm16.buffer);
+          }
+        }
+      };
+      this.processorNode = processor;
+    } catch (err) {
+      console.warn('PCM processor setup warning:', err);
+    }
   }
 
   getAudioContext() {
@@ -88,17 +147,23 @@ class AudioEngine {
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
+          channelCount: 2,
+          sampleRate: 48000,
         },
       });
 
       const audioTracks = displayStream.getAudioTracks();
       if (!audioTracks || audioTracks.length === 0) {
-        // User forgot to check "Share audio" in the browser share dialog
         displayStream.getTracks().forEach((t) => t.stop());
         throw new Error(
-          'No audio track detected! When prompted to share, ensure "Share audio" / "Share system audio" is checked.'
+          'No audio track detected! Make sure you check "Share audio" or "Share system audio" in the browser share dialog.'
         );
       }
+
+      // Immediately stop video tracks to completely free WiFi bandwidth and CPU for audio
+      displayStream.getVideoTracks().forEach((vt) => {
+        try { vt.stop(); } catch (e) {}
+      });
 
       this.currentStream = displayStream;
       this.mediaStreamSource = this.audioCtx.createMediaStreamSource(
@@ -159,7 +224,6 @@ class AudioEngine {
 
     bufferSource.connect(this.gainNode);
     if (shouldPlayLocally) {
-      // Connect to local speakers as well
       this.gainNode.connect(this.audioCtx.destination);
     }
 
@@ -182,15 +246,16 @@ class AudioEngine {
 
     pulseGain.gain.setValueAtTime(0, this.audioCtx.currentTime);
 
-    // Schedule periodic beeps every 1.0 second
+    // Schedule rhythmic pulses every 1.0 second (clear 100ms blip)
     const scheduleBeeps = () => {
-      if (!this.isToneActive) return;
+      if (!this.isToneActive || !this.audioCtx) return;
       const now = this.audioCtx.currentTime;
       pulseGain.gain.setValueAtTime(0, now);
-      pulseGain.gain.linearRampToValueAtTime(0.5, now + 0.02);
+      pulseGain.gain.linearRampToValueAtTime(0.8, now + 0.01);
       pulseGain.gain.linearRampToValueAtTime(0, now + 0.12);
     };
 
+    scheduleBeeps();
     const interval = setInterval(scheduleBeeps, 1000);
     this.toneInterval = interval;
     this.isToneActive = true;
