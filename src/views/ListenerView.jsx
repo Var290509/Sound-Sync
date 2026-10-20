@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { PeerListener } from '../lib/peerRelay';
+import { SignalingListener } from '../lib/signalingRelay';
 import SegmentedCodeInput from '../components/SegmentedCodeInput';
 import AudioVisualizer from '../components/AudioVisualizer';
 import { 
@@ -38,22 +38,22 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
   const [bufferMode, setBufferMode] = useState('ultra'); // 'ultra', 'balanced', 'stable'
 
   const audioElementRef = useRef(null);
-  const peerListenerRef = useRef(null);
+  const signalingListenerRef = useRef(null);
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
 
-  // Clean up peer on unmount or tab close
+  // Clean up listener on unmount or tab close
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (peerListenerRef.current) {
-        peerListenerRef.current.destroy();
+      if (signalingListenerRef.current) {
+        signalingListenerRef.current.destroy();
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      if (peerListenerRef.current) {
-        peerListenerRef.current.destroy();
+      if (signalingListenerRef.current) {
+        signalingListenerRef.current.destroy();
       }
     };
   }, []);
@@ -119,8 +119,8 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
   const handleBufferModeChange = (mode) => {
     setBufferMode(mode);
     const delay = mode === 'ultra' ? 0.005 : mode === 'balanced' ? 0.025 : 0.070;
-    if (peerListenerRef.current) {
-      peerListenerRef.current.setPlayoutDelay(delay);
+    if (signalingListenerRef.current) {
+      signalingListenerRef.current.setPlayoutDelay(delay);
     }
   };
 
@@ -130,7 +130,8 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
       setErrorMsg('Please enter your device name.');
       return;
     }
-    if (!code || code.length < 4) {
+    const cleanCode = (code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!cleanCode || cleanCode.length < 4) {
       setErrorMsg('Please enter a valid 6-character room code.');
       return;
     }
@@ -158,9 +159,9 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
       }
     } catch (e) {}
 
-    // Initialize PeerListener
-    peerListenerRef.current = new PeerListener(
-      code.toUpperCase(),
+    // Initialize SignalingListener
+    signalingListenerRef.current = new SignalingListener(
+      cleanCode,
       deviceName.trim(),
       {
         onStream: (stream) => {
@@ -205,12 +206,8 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
         },
         onError: (err) => {
           setIsConnecting(false);
-          console.error('[Listener View] Peer listener error:', err);
-          if (err.type === 'peer-unavailable') {
-            setErrorMsg('Room not found. Please verify the 6-character room code on the host screen.');
-          } else {
-            setErrorMsg(err.message || 'Connection failed. Please verify code.');
-          }
+          console.error('[Listener View] Signaling listener error:', err);
+          setErrorMsg(err.message || 'Connection notice.');
         },
       }
     );
@@ -218,9 +215,9 @@ export default function ListenerView({ initialRoomCode = '', onSelectTab }) {
 
   // Disconnect from room
   const handleDisconnect = () => {
-    if (peerListenerRef.current) {
-      peerListenerRef.current.destroy();
-      peerListenerRef.current = null;
+    if (signalingListenerRef.current) {
+      signalingListenerRef.current.destroy();
+      signalingListenerRef.current = null;
     }
     if (audioElementRef.current) {
       audioElementRef.current.pause();

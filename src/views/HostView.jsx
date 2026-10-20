@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { audioEngine } from '../lib/audioEngine';
-import { PeerHost } from '../lib/peerRelay';
+import { SignalingHost } from '../lib/signalingRelay';
 import AudioVisualizer from '../components/AudioVisualizer';
 import QRCodeModal from '../components/QRCodeModal';
 import { 
@@ -47,21 +47,21 @@ export default function HostView({ onSelectTab }) {
   const [copiedLink, setCopiedLink] = useState(false);
   const [isQrOpen, setIsQrOpen] = useState(false);
 
-  const peerHostRef = useRef(null);
+  const signalingHostRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // Clean up peer on unmount or tab close
+  // Clean up host on unmount or tab close
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (peerHostRef.current) {
-        peerHostRef.current.destroy();
+      if (signalingHostRef.current) {
+        signalingHostRef.current.destroy();
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      if (peerHostRef.current) {
-        peerHostRef.current.destroy();
+      if (signalingHostRef.current) {
+        signalingHostRef.current.destroy();
       }
     };
   }, []);
@@ -93,8 +93,8 @@ export default function HostView({ onSelectTab }) {
     setRoomCode(newCode);
     setIsHosting(true);
 
-    // Initialize PeerHost via direct WebRTC cloud signaling (works globally & on Vercel)
-    peerHostRef.current = new PeerHost(
+    // Initialize SignalingHost via high-reliability cloud broker
+    signalingHostRef.current = new SignalingHost(
       newCode,
       roomName,
       deviceName,
@@ -104,16 +104,11 @@ export default function HostView({ onSelectTab }) {
           setConnectedListeners(listeners);
         },
         onStatusChange: (status) => {
-          console.log('[Host View] Cloud signaling status:', status);
+          console.log('[Host View] Signaling status:', status);
         },
         onError: (err) => {
-          console.error('[Host View] Host peer error:', err);
-          if (err.type === 'unavailable-id') {
-            setErrorMsg('Room code collision. Re-generating room code...');
-            setTimeout(handleStartHosting, 1000);
-          } else {
-            setErrorMsg(err.message || 'Peer connection notification');
-          }
+          console.error('[Host View] Signaling error:', err);
+          setErrorMsg(err.message || 'Connection notification');
         },
       }
     );
@@ -130,7 +125,7 @@ export default function HostView({ onSelectTab }) {
       } else if (sourceType === 'mic') {
         stream = await audioEngine.captureMicrophone();
       } else if (sourceType === 'tone') {
-        stream = await audioEngine.startTestTone();
+        stream = await audioEngine.startTestTone(true);
       }
 
       if (stream) {
@@ -138,9 +133,9 @@ export default function HostView({ onSelectTab }) {
         setSelectedSource(sourceType);
 
         // Update WebRTC track for all listeners
-        if (peerHostRef.current) {
-          peerHostRef.current.updateAudioTrack(stream);
-          peerHostRef.current.setAudioState(true, sourceType);
+        if (signalingHostRef.current) {
+          signalingHostRef.current.updateAudioTrack(stream);
+          signalingHostRef.current.setAudioState(true, sourceType);
         }
       }
     } catch (err) {
@@ -159,9 +154,9 @@ export default function HostView({ onSelectTab }) {
       setIsStreaming(true);
       setSelectedSource('file');
 
-      if (peerHostRef.current) {
-        peerHostRef.current.updateAudioTrack(stream);
-        peerHostRef.current.setAudioState(true, 'file');
+      if (signalingHostRef.current) {
+        signalingHostRef.current.updateAudioTrack(stream);
+        signalingHostRef.current.setAudioState(true, 'file');
       }
     } catch (err) {
       setErrorMsg('Error reading audio file: ' + err.message);
@@ -172,17 +167,17 @@ export default function HostView({ onSelectTab }) {
   const handleStopAudioStream = () => {
     audioEngine.stopAll();
     setIsStreaming(false);
-    if (peerHostRef.current) {
-      peerHostRef.current.setAudioState(false, selectedSource);
+    if (signalingHostRef.current) {
+      signalingHostRef.current.setAudioState(false, selectedSource);
     }
   };
 
   // Stop Entire Hosting Session
   const handleCloseSession = () => {
     handleStopAudioStream();
-    if (peerHostRef.current) {
-      peerHostRef.current.destroy();
-      peerHostRef.current = null;
+    if (signalingHostRef.current) {
+      signalingHostRef.current.destroy();
+      signalingHostRef.current = null;
     }
     setIsHosting(false);
     setRoomCode('');
