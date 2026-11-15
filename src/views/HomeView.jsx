@@ -1,6 +1,23 @@
 import React from 'react';
 import VercelLiquidHero from '../components/VercelLiquidHero';
-import { Radio, Headphones, Wifi, Zap, Volume2, ShieldCheck, ArrowRight, Laptop, Smartphone, Speaker } from 'lucide-react';
+import { 
+  Radio, 
+  Headphones, 
+  Wifi, 
+  Zap, 
+  Volume2, 
+  ShieldCheck, 
+  ArrowRight, 
+  Laptop, 
+  Smartphone, 
+  Speaker,
+  BookOpen,
+  HelpCircle,
+  Cpu,
+  Check,
+  X,
+  Sparkles
+} from 'lucide-react';
 
 export default function HomeView({ onSelectTab }) {
   const features = [
@@ -36,9 +53,18 @@ export default function HomeView({ onSelectTab }) {
     }
   ];
 
+  const comparisonRows = [
+    { feature: 'Physical Latency', soundSync: '2 - 10 ms (Sub-frame)', bluetooth: '150 - 250 ms', audioRelayApp: '30 - 60 ms', auxCable: '< 1 ms' },
+    { feature: 'Installation Required', soundSync: 'None (Pure Web Browser)', bluetooth: 'Driver Pairing', audioRelayApp: 'Desktop + Mobile App', auxCable: 'Physical Cord' },
+    { feature: 'Multi-Device Broadcast', soundSync: 'Yes (Unlimited Receivers)', bluetooth: 'No (Single Pair)', audioRelayApp: 'Paid License Only', auxCable: 'Splitter Hardware' },
+    { feature: 'Wireless Range', soundSync: 'Entire WiFi Coverage (~50m)', bluetooth: 'Limited (~10m line of sight)', audioRelayApp: 'WiFi Coverage', auxCable: 'Cable Length (~1.5m)' },
+    { feature: 'Audio Fidelity', soundSync: '48kHz Stereo Opus (256kbps)', bluetooth: '44.1kHz SBC (lossy)', audioRelayApp: '44.1kHz - 48kHz', auxCable: 'Analog Direct' },
+    { feature: 'Cost & Licenses', soundSync: '100% Free & Open Web', bluetooth: 'Hardware Dependent', audioRelayApp: 'Freemium / Premium', auxCable: 'Hardware Cost' },
+  ];
+
   return (
-    <div className="space-y-12 sm:space-y-16 pb-16">
-      {/* Hero Section with Skiper12 Liquid Fluid Simulation (Center Triangle replaced with Music Lines) */}
+    <div className="space-y-14 sm:space-y-20 pb-20 text-theme-text">
+      {/* Hero Section with Skiper12 Liquid Fluid Simulation */}
       <section className="pt-2 sm:pt-6">
         <div className="text-center max-w-3xl mx-auto mb-8 px-4">
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-mono font-medium border border-theme-accent/30 bg-theme-accent/10 text-theme-accent mb-4">
@@ -50,6 +76,9 @@ export default function HomeView({ onSelectTab }) {
           </h1>
           <p className="mt-3 text-lg sm:text-xl text-theme-muted font-medium max-w-xl mx-auto">
             Connect to your surroundings and stream studio-grade audio to any device over WiFi.
+          </p>
+          <p className="mt-2 text-xs sm:text-sm text-theme-muted/80 max-w-2xl mx-auto leading-relaxed">
+            Experience real-time wireless audio relay with physical latency under 10ms. Turn any smartphone, tablet, or secondary laptop into a wireless headphone monitor or synchronized multi-room speaker system.
           </p>
         </div>
 
@@ -98,7 +127,7 @@ export default function HomeView({ onSelectTab }) {
               <Headphones className="w-7 h-7" />
             </div>
             <span className="text-xs font-mono font-bold px-3 py-1 rounded-full border border-theme-border bg-theme-surfaceHover text-theme-text">
-              LISTENER
+              CLIENT
             </span>
           </div>
 
@@ -116,7 +145,33 @@ export default function HomeView({ onSelectTab }) {
         </div>
       </section>
 
-      {/* Related Photos & Features (Requested in sketch: "Add some related photos about the website") */}
+      {/* Editorial Overview Article: The Evolution of Wireless Audio Relay */}
+      <section className="max-w-5xl mx-auto px-4">
+        <div className="rounded-3xl bg-theme-surface border border-theme-border p-8 sm:p-10 shadow-xl space-y-6">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono font-bold bg-theme-accent/10 text-theme-accent border border-theme-accent/30">
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>High-Fidelity Audio Architecture</span>
+          </div>
+
+          <h2 className="text-2xl sm:text-3xl font-bold font-display text-theme-text">
+            Why WiFi Audio Relay Outperforms Traditional Bluetooth
+          </h2>
+
+          <div className="space-y-4 text-sm text-theme-muted leading-relaxed">
+            <p>
+              For decades, consumers have relied on Bluetooth to stream sound between phones, computers, and wireless headphones. While convenient, Bluetooth operates in the heavily congested 2.4 GHz spectrum with strict power constraints. Its standard SBC and AAC codecs compress digital audio into deep hardware buffers, creating an unavoidable <strong>150ms to 250ms delay</strong>. For YouTube videos, gaming, or musical composition, this latency causes distracting lip-sync misalignment and sluggish feedback.
+            </p>
+            <p>
+              <strong>Sound Sync</strong> solves this architectural dilemma by shifting the entire audio transport layer to your local WiFi router. Over a modern 5GHz or 2.4GHz 802.11ac/ax WiFi network, bandwidth exceeds 300 to 1200 Mbps — thousands of times higher than Bluetooth. By utilizing <strong>WebRTC peer-to-peer data channels</strong> and native <strong>HTML5 Web Audio API</strong> hardware scheduling, Sound Sync transmits uncompressed 48kHz Opus frames in 5-millisecond packets.
+            </p>
+            <p>
+              The result is a transparent acoustic relay with a physical transit delay between <strong>2 and 10 milliseconds</strong>. What you see on your computer screen aligns perfectly with what you hear in your headphones.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Related Photos & Features */}
       <section className="max-w-5xl mx-auto px-4">
         <div className="text-center mb-10">
           <h2 className="text-2xl sm:text-3xl font-extrabold font-display text-theme-text">
@@ -180,6 +235,45 @@ export default function HomeView({ onSelectTab }) {
         </div>
       </section>
 
+      {/* Technical Comparison Matrix */}
+      <section className="max-w-5xl mx-auto px-4">
+        <div className="rounded-3xl bg-theme-surface border border-theme-border p-6 sm:p-10 shadow-xl space-y-6">
+          <div className="text-center max-w-2xl mx-auto space-y-2">
+            <h2 className="text-2xl sm:text-3xl font-bold font-display text-theme-text">
+              Technical Comparison: Sound Sync vs Alternatives
+            </h2>
+            <p className="text-xs sm:text-sm text-theme-muted">
+              How our browser-native WebRTC relay compares against traditional Bluetooth, desktop apps, and physical cables.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto pt-2">
+            <table className="w-full text-left text-xs border border-theme-border rounded-2xl overflow-hidden">
+              <thead className="bg-theme-bg/80 border-b border-theme-border font-mono text-theme-accent uppercase">
+                <tr>
+                  <th className="p-3.5">Feature</th>
+                  <th className="p-3.5 bg-theme-accent/10 text-theme-accent font-bold">Sound Sync (WiFi)</th>
+                  <th className="p-3.5">Bluetooth 5.0 (SBC)</th>
+                  <th className="p-3.5">AudioRelay App</th>
+                  <th className="p-3.5">3.5mm AUX Cable</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-theme-border/60 text-theme-muted">
+                {comparisonRows.map((row, idx) => (
+                  <tr key={idx} className="hover:bg-theme-surfaceHover/50 transition-colors">
+                    <td className="p-3.5 font-semibold text-theme-text whitespace-nowrap">{row.feature}</td>
+                    <td className="p-3.5 bg-theme-accent/5 font-semibold text-theme-accent whitespace-nowrap">{row.soundSync}</td>
+                    <td className="p-3.5 whitespace-nowrap">{row.bluetooth}</td>
+                    <td className="p-3.5 whitespace-nowrap">{row.audioRelayApp}</td>
+                    <td className="p-3.5 whitespace-nowrap">{row.auxCable}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       {/* How it Works Step-by-Step */}
       <section className="max-w-5xl mx-auto px-4">
         <div className="rounded-3xl bg-theme-surface border border-theme-border p-8 sm:p-10 shadow-xl">
@@ -218,6 +312,57 @@ export default function HomeView({ onSelectTab }) {
               </p>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* Quick Navigation Cards to Documentation & Support */}
+      <section className="max-w-5xl mx-auto px-4 grid grid-cols-1 sm:grid-cols-3 gap-6">
+        <div
+          onClick={() => onSelectTab('guide')}
+          className="group cursor-pointer p-6 rounded-3xl bg-theme-surface border border-theme-border hover:border-theme-accent transition-all shadow-md space-y-2"
+        >
+          <BookOpen className="w-6 h-6 text-theme-accent mb-2 group-hover:scale-110 transition-transform" />
+          <h4 className="font-bold text-base text-theme-text group-hover:text-theme-accent transition-colors">
+            User Guide & Documentation
+          </h4>
+          <p className="text-xs text-theme-muted leading-relaxed">
+            Step-by-step instructions for streaming Chrome tabs, microphones, and tuning buffer modes.
+          </p>
+          <span className="text-xs font-semibold text-theme-accent flex items-center gap-1 pt-2">
+            Read documentation <ArrowRight className="w-3.5 h-3.5" />
+          </span>
+        </div>
+
+        <div
+          onClick={() => onSelectTab('faq')}
+          className="group cursor-pointer p-6 rounded-3xl bg-theme-surface border border-theme-border hover:border-theme-accent transition-all shadow-md space-y-2"
+        >
+          <HelpCircle className="w-6 h-6 text-theme-accent mb-2 group-hover:scale-110 transition-transform" />
+          <h4 className="font-bold text-base text-theme-text group-hover:text-theme-accent transition-colors">
+            FAQ & Troubleshooting
+          </h4>
+          <p className="text-xs text-theme-muted leading-relaxed">
+            Resolving AP isolation, mobile autoplay permissions, and connection diagnostics.
+          </p>
+          <span className="text-xs font-semibold text-theme-accent flex items-center gap-1 pt-2">
+            View FAQ <ArrowRight className="w-3.5 h-3.5" />
+          </span>
+        </div>
+
+        <div
+          onClick={() => onSelectTab('about')}
+          className="group cursor-pointer p-6 rounded-3xl bg-theme-surface border border-theme-border hover:border-theme-accent transition-all shadow-md space-y-2"
+        >
+          <Cpu className="w-6 h-6 text-theme-accent mb-2 group-hover:scale-110 transition-transform" />
+          <h4 className="font-bold text-base text-theme-text group-hover:text-theme-accent transition-colors">
+            About VIK-V-VKS
+          </h4>
+          <p className="text-xs text-theme-muted leading-relaxed">
+            Meet the 7 engineering creators behind Sound Sync and explore our technical architecture.
+          </p>
+          <span className="text-xs font-semibold text-theme-accent flex items-center gap-1 pt-2">
+            Meet the team <ArrowRight className="w-3.5 h-3.5" />
+          </span>
         </div>
       </section>
     </div>

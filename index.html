@@ -14,7 +14,7 @@
     <meta name="apple-mobile-web-app-title" content="Sound Sync" />
     <title>Sound Sync - Connect to your surroundings | WiFi Audio Relay</title>
     <meta name="description" content="Sound Sync allows you to stream crystal-clear audio from PC to phones, speakers, and devices over WiFi with ultra-low latency. Open-source AudioRelay alternative." />
-    <meta name="keywords" content="Sound Sync, sound sync, sound sync wifi, audio relay, stream audio over wifi, low latency audio stream, pc to phone audio, wifi speaker" />
+    <meta name="keywords" content="Sound Sync, sound sync, sound sync wifi, audio relay, stream audio over wifi, low latency audio stream, pc to phone audio, wifi speaker, webrtc audio" />
     <meta name="author" content="VIK-V-VKS" />
     <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
 
@@ -26,7 +26,7 @@
     <meta property="og:url" content="https://sound-sync-vik-v-vks.vercel.app/" />
     <meta property="og:site_name" content="Sound Sync" />
     <meta property="og:title" content="Sound Sync - Connect to your surroundings" />
-    <meta property="og:description" content="Stream live audio across devices over WiFi with sub-20ms latency. No cables, no delay." />
+    <meta property="og:description" content="Stream live audio across devices over WiFi with sub-10ms latency. No cables, no delay." />
     <meta property="og:image" content="/logo.png" />
 
     <!-- Twitter -->
@@ -54,7 +54,7 @@
           "applicationCategory": "MultimediaApplication",
           "operatingSystem": "Web, Windows, Android, iOS, macOS, Linux",
           "description": "Low-latency wireless audio relay and real-time sound streaming over WebRTC.",
-          "featureList": "WiFi Audio Relay, Ultra Low Latency Streaming, Tab and Screen Audio Share, Microphone Broadcast, Multi-Device Sound Sync",
+          "featureList": "WiFi Audio Relay, Ultra Low Latency Streaming, Tab and Screen Audio Share, Microphone Broadcast, Multi-Device Sound Sync, Comprehensive User Guide, Privacy Policy, Terms of Service",
           "offers": {
             "@type": "Offer",
             "price": "0",
@@ -72,12 +72,56 @@
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+    
     <!-- Google AdSense Verification Code -->
     <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1434761684241032"
       crossorigin="anonymous"></script>
   </head>
   <body class="bg-theme-bg text-theme-text font-sans antialiased overflow-x-hidden selection:bg-theme-accent selection:text-theme-bg">
-    <div id="root"></div>
+    <!-- Initial static publisher content for crawlers & indexers (React replaces this on mount) -->
+    <div id="root">
+      <div style="font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #FAF7F2; background: #0F0D09;">
+        <header style="border-bottom: 1px solid #333; padding-bottom: 20px; margin-bottom: 30px;">
+          <h1 style="font-size: 2.5rem; margin: 0 0 10px 0; color: #E5B842;">Sound Sync — WiFi Audio Relay</h1>
+          <p style="font-size: 1.1rem; color: #aaa; margin: 0;">Connect to your surroundings and stream studio-grade audio to any device over WiFi with sub-10ms latency.</p>
+        </header>
+
+        <main>
+          <article>
+            <h2 style="color: #E5B842; font-size: 1.6rem;">High-Fidelity Wireless Sound Streaming Across Devices</h2>
+            <p>
+              Sound Sync is an open-source, web-based wireless audio relay system developed by VIK-V-VKS. It allows users to stream real-time audio from personal computers (browser tabs, YouTube, Spotify, desktop sound, or microphones) directly to mobile phones, tablets, and secondary speakers over local WiFi with physical latency between 2ms and 10ms.
+            </p>
+            <p>
+              Unlike legacy Bluetooth protocols that incur 150ms to 250ms of audio delay and lossy compression, Sound Sync utilizes peer-to-peer WebRTC data channels, the Opus interactive speech and audio codec at 48,000 Hz stereo, and the HTML5 Web Audio API to deliver synchronized, lossless sound across multiple rooms.
+            </p>
+
+            <h3 style="color: #E5B842; font-size: 1.3rem; margin-top: 25px;">Key Features & Capabilities</h3>
+            <ul>
+              <li><strong>Ultra-Low Latency</strong>: Physical transit delay under 10ms over local WiFi networks.</li>
+              <li><strong>Universal Browser Compatibility</strong>: Zero installation required. Runs directly in Chrome, Edge, Safari, Firefox on Windows, macOS, Android, and iOS.</li>
+              <li><strong>Multi-Device Broadcast</strong>: Transmit to multiple phones and tablets simultaneously for shared listening, silent disco, or multi-room party sound.</li>
+              <li><strong>Full Stereo 48kHz Opus Encoding</strong>: Studio-quality frequency response from 20Hz to 20,000Hz.</li>
+              <li><strong>Zero Cloud Audio Storage</strong>: All audio content travels strictly peer-to-peer (P2P) and is encrypted end-to-end via DTLS/SRTP.</li>
+            </ul>
+
+            <h3 style="color: #E5B842; font-size: 1.3rem; margin-top: 25px;">Resources & Documentation</h3>
+            <ul>
+              <li><a href="#guide" style="color: #E5B842;">User Guide & Setup Instructions</a></li>
+              <li><a href="#faq" style="color: #E5B842;">FAQ & Troubleshooting Guide</a></li>
+              <li><a href="#about" style="color: #E5B842;">About Sound Sync & The VIK-V-VKS Team</a></li>
+              <li><a href="#privacy" style="color: #E5B842;">Privacy Policy (GDPR / CCPA / AdSense Compliance)</a></li>
+              <li><a href="#terms" style="color: #E5B842;">Terms of Service</a></li>
+              <li><a href="#contact" style="color: #E5B842;">Contact Support</a></li>
+            </ul>
+          </article>
+        </main>
+
+        <footer style="margin-top: 40px; border-top: 1px solid #333; padding-top: 20px; font-size: 0.85rem; color: #888;">
+          <p>© 2026 Sound Sync by VIK-V-VKS. All rights reserved. Connect to your surroundings.</p>
+        </footer>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

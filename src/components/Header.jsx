@@ -1,5 +1,17 @@
 import React from 'react';
-import { Menu, Sun, Moon, Sparkles, Wifi, Radio, Headphones, Layers } from 'lucide-react';
+import { 
+  Menu, 
+  Sun, 
+  Moon, 
+  Sparkles, 
+  Wifi, 
+  Radio, 
+  Headphones, 
+  Layers, 
+  BookOpen, 
+  HelpCircle, 
+  Info 
+} from 'lucide-react';
 import { useTheme, THEMES } from '../context/ThemeContext';
 
 export default function Header({ onToggleSidebar, activeTab, onSelectTab, connectedPeersCount = 0 }) {
@@ -8,21 +20,21 @@ export default function Header({ onToggleSidebar, activeTab, onSelectTab, connec
   const themes = [
     {
       id: THEMES.IVORY,
-      label: '1. Ivory',
+      label: 'Ivory',
       colorPreview: '#FAF7F2',
       borderPreview: '#BFA15F',
       textPreview: '#1C1917'
     },
     {
       id: THEMES.GOLD,
-      label: '2. Gold',
+      label: 'Gold',
       colorPreview: '#0F0D09',
       borderPreview: '#E5B842',
       textPreview: '#FFFBF0'
     },
     {
       id: THEMES.NAVY,
-      label: '3. Deep Atlas Navy',
+      label: 'Navy',
       colorPreview: '#060D17',
       borderPreview: '#38BDF8',
       textPreview: '#F0F4F8'
@@ -51,9 +63,9 @@ export default function Header({ onToggleSidebar, activeTab, onSelectTab, connec
             />
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-xl sm:text-2xl font-black tracking-tight font-display text-theme-text">
+                <span className="text-xl sm:text-2xl font-black tracking-tight font-display text-theme-text">
                   Sound Sync
-                </h1>
+                </span>
                 <span className="hidden sm:inline-block text-xs font-mono px-2 py-0.5 rounded-full border border-theme-accent/40 bg-theme-accent/10 text-theme-accent font-semibold">
                   v1.0 WiFi
                 </span>
@@ -65,11 +77,11 @@ export default function Header({ onToggleSidebar, activeTab, onSelectTab, connec
           </div>
         </div>
 
-        {/* Center: Quick navigation pills (desktop) */}
-        <div className="hidden md:flex items-center gap-1.5 p-1 rounded-full bg-theme-surface border border-theme-border">
+        {/* Center: Navigation pills (desktop) */}
+        <nav className="hidden xl:flex items-center gap-1 p-1 rounded-full bg-theme-surface border border-theme-border text-xs">
           <button
             onClick={() => onSelectTab('home')}
-            className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
+            className={`px-3.5 py-1.5 rounded-full font-medium transition-all ${
               activeTab === 'home'
                 ? 'bg-theme-accent text-theme-bg font-semibold shadow-sm'
                 : 'text-theme-muted hover:text-theme-text'
@@ -79,31 +91,63 @@ export default function Header({ onToggleSidebar, activeTab, onSelectTab, connec
           </button>
           <button
             onClick={() => onSelectTab('host')}
-            className={`px-4 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 transition-all ${
+            className={`px-3.5 py-1.5 rounded-full font-medium flex items-center gap-1.5 transition-all ${
               activeTab === 'host'
                 ? 'bg-theme-accent text-theme-bg font-semibold shadow-sm'
                 : 'text-theme-muted hover:text-theme-text'
             }`}
           >
             <Radio className="w-3.5 h-3.5" />
-            <span>Host Broadcast</span>
+            <span>Host</span>
           </button>
           <button
             onClick={() => onSelectTab('listener')}
-            className={`px-4 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 transition-all ${
+            className={`px-3.5 py-1.5 rounded-full font-medium flex items-center gap-1.5 transition-all ${
               activeTab === 'listener'
                 ? 'bg-theme-accent text-theme-bg font-semibold shadow-sm'
                 : 'text-theme-muted hover:text-theme-text'
             }`}
           >
             <Headphones className="w-3.5 h-3.5" />
-            <span>Connect Listener</span>
+            <span>Listener</span>
           </button>
-        </div>
+          <button
+            onClick={() => onSelectTab('guide')}
+            className={`px-3.5 py-1.5 rounded-full font-medium flex items-center gap-1.5 transition-all ${
+              activeTab === 'guide'
+                ? 'bg-theme-accent text-theme-bg font-semibold shadow-sm'
+                : 'text-theme-muted hover:text-theme-text'
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>Guide</span>
+          </button>
+          <button
+            onClick={() => onSelectTab('faq')}
+            className={`px-3.5 py-1.5 rounded-full font-medium flex items-center gap-1.5 transition-all ${
+              activeTab === 'faq'
+                ? 'bg-theme-accent text-theme-bg font-semibold shadow-sm'
+                : 'text-theme-muted hover:text-theme-text'
+            }`}
+          >
+            <HelpCircle className="w-3.5 h-3.5" />
+            <span>FAQ</span>
+          </button>
+          <button
+            onClick={() => onSelectTab('about')}
+            className={`px-3.5 py-1.5 rounded-full font-medium flex items-center gap-1.5 transition-all ${
+              activeTab === 'about'
+                ? 'bg-theme-accent text-theme-bg font-semibold shadow-sm'
+                : 'text-theme-muted hover:text-theme-text'
+            }`}
+          >
+            <Info className="w-3.5 h-3.5" />
+            <span>About</span>
+          </button>
+        </nav>
 
-        {/* Right: Theme Selector from Sketch + WiFi Status */}
+        {/* Right: Theme Selector from Sketch */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Theme Dropdown / Pills specified in sketches: 1. Ivory, 2. Gold, 3. Deep Atlas Navy */}
           <div className="flex items-center gap-1 p-1 rounded-2xl bg-theme-surface border border-theme-border text-xs">
             {themes.map((t) => {
               const isActive = theme === t.id;
@@ -125,13 +169,12 @@ export default function Header({ onToggleSidebar, activeTab, onSelectTab, connec
                       borderColor: t.borderPreview
                     }}
                   />
-                  <span className="hidden lg:inline">{t.label}</span>
+                  <span className="hidden md:inline">{t.label}</span>
                 </button>
               );
             })}
           </div>
 
-          {/* Connected Peers Badge */}
           {connectedPeersCount > 0 && (
             <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs font-mono font-medium">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />

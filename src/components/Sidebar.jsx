@@ -1,5 +1,18 @@
 import React, { useState } from 'react';
-import { Home, Radio, Headphones, X, Music, RadioTower, Sparkles, ChevronRight, ShieldCheck } from 'lucide-react';
+import { 
+  Home, 
+  Radio, 
+  Headphones, 
+  X, 
+  Sparkles, 
+  BookOpen, 
+  HelpCircle, 
+  Info, 
+  ShieldCheck, 
+  FileText, 
+  Mail,
+  ChevronRight
+} from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
 export default function Sidebar({ isOpen, onClose, activeTab, onSelectTab }) {
@@ -27,7 +40,7 @@ export default function Sidebar({ isOpen, onClose, activeTab, onSelectTab }) {
 
   const [hoveredLetter, setHoveredLetter] = useState(null);
 
-  const navItems = [
+  const mainNavItems = [
     {
       id: 'home',
       label: 'Home',
@@ -50,6 +63,46 @@ export default function Sidebar({ isOpen, onClose, activeTab, onSelectTab }) {
     },
   ];
 
+  const resourceNavItems = [
+    {
+      id: 'guide',
+      label: 'User Guide & Docs',
+      icon: BookOpen,
+      description: 'WiFi audio setup & buffer tuning',
+    },
+    {
+      id: 'faq',
+      label: 'FAQ & Troubleshooting',
+      icon: HelpCircle,
+      description: 'Answers to connection & delay issues',
+    },
+    {
+      id: 'about',
+      label: 'About Sound Sync',
+      icon: Info,
+      description: 'Mission & VIK-V-VKS team story',
+    },
+    {
+      id: 'contact',
+      label: 'Contact & Support',
+      icon: Mail,
+      description: 'Direct support & feedback channel',
+    },
+  ];
+
+  const legalNavItems = [
+    {
+      id: 'privacy',
+      label: 'Privacy Policy',
+      icon: ShieldCheck,
+    },
+    {
+      id: 'terms',
+      label: 'Terms of Service',
+      icon: FileText,
+    },
+  ];
+
   return (
     <>
       {/* Backdrop for mobile */}
@@ -62,26 +115,26 @@ export default function Sidebar({ isOpen, onClose, activeTab, onSelectTab }) {
 
       {/* Sidebar Panel */}
       <aside
-        className={`fixed top-0 left-0 bottom-0 w-80 sm:w-84 bg-theme-surface border-r border-theme-border z-50 flex flex-col justify-between p-6 transition-transform duration-300 ease-in-out shadow-2xl ${
+        className={`fixed top-0 left-0 bottom-0 w-80 sm:w-88 bg-theme-surface border-r border-theme-border z-50 flex flex-col justify-between p-6 transition-transform duration-300 ease-in-out shadow-2xl overflow-y-auto ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        {/* Top Header */}
-        <div>
-          <div className="flex items-center justify-between pb-6 border-b border-theme-border">
-            <div className="flex items-center gap-3">
+        {/* Top Header & Navigation */}
+        <div className="space-y-6">
+          <div className="flex items-center justify-between pb-4 border-b border-theme-border">
+            <div className="flex items-center gap-3 cursor-pointer" onClick={() => { onSelectTab('home'); onClose(); }}>
               <img
                 src="/logo.png"
                 alt="Sound Sync"
                 className="w-10 h-10 rounded-2xl border border-theme-accent/40 shadow-sm object-cover"
               />
               <div>
-                <h2 className="font-bold text-lg tracking-tight text-theme-text font-display">
+                <span className="font-bold text-lg tracking-tight text-theme-text font-display block">
                   Sound Sync
-                </h2>
-                <p className="text-xs text-theme-muted font-medium">
+                </span>
+                <span className="text-xs text-theme-muted font-medium">
                   Connect to your surroundings
-                </p>
+                </span>
               </div>
             </div>
 
@@ -94,60 +147,119 @@ export default function Sidebar({ isOpen, onClose, activeTab, onSelectTab }) {
             </button>
           </div>
 
-          {/* Navigation Links */}
-          <nav className="mt-6 space-y-2">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
+          {/* Main App Navigation */}
+          <div>
+            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-theme-muted px-2 block mb-2">
+              Audio Relay Tools
+            </span>
+            <nav className="space-y-1.5">
+              {mainNavItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      onSelectTab(item.id);
+                      onClose();
+                    }}
+                    className={`w-full group flex items-start gap-3 p-3 rounded-2xl text-left transition-all duration-200 border ${
+                      isActive
+                        ? 'bg-theme-accent/15 border-theme-accent/50 text-theme-accent font-semibold shadow-[0_0_20px_var(--color-glow)]'
+                        : 'border-transparent text-theme-text hover:bg-theme-surfaceHover hover:border-theme-border/70'
+                    }`}
+                  >
+                    <div
+                      className={`mt-0.5 p-2 rounded-xl transition-colors ${
+                        isActive
+                          ? 'bg-theme-accent text-theme-bg'
+                          : 'bg-theme-surfaceHover text-theme-muted group-hover:text-theme-text'
+                      }`}
+                    >
+                      <Icon className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">{item.label}</span>
+                        {item.badge && (
+                          <span
+                            className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md ${
+                              isActive
+                                ? 'bg-theme-accent text-theme-bg'
+                                : 'bg-theme-surfaceHover text-theme-muted border border-theme-border'
+                            }`}
+                          >
+                            {item.badge}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-theme-muted truncate mt-0.5">
+                        {item.description}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+
+          {/* Knowledge & Resources */}
+          <div>
+            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-theme-muted px-2 block mb-2">
+              Resources & Support
+            </span>
+            <nav className="space-y-1">
+              {resourceNavItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      onSelectTab(item.id);
+                      onClose();
+                    }}
+                    className={`w-full group flex items-center gap-3 p-2.5 rounded-xl text-left transition-all text-xs border ${
+                      isActive
+                        ? 'bg-theme-accent/15 border-theme-accent/40 text-theme-accent font-bold'
+                        : 'border-transparent text-theme-muted hover:text-theme-text hover:bg-theme-surfaceHover'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 text-theme-accent shrink-0" />
+                    <span className="font-medium flex-1">{item.label}</span>
+                    <ChevronRight className="w-3.5 h-3.5 opacity-60" />
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+
+          {/* Legal / Policy Links */}
+          <div className="pt-2 border-t border-theme-border/60">
+            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-theme-muted px-2 block mb-2">
+              Compliance & Legal
+            </span>
+            <div className="flex items-center gap-3 px-2 text-xs text-theme-muted">
+              {legalNavItems.map((item) => (
                 <button
                   key={item.id}
                   onClick={() => {
                     onSelectTab(item.id);
                     onClose();
                   }}
-                  className={`w-full group flex items-start gap-3.5 p-3.5 rounded-2xl text-left transition-all duration-200 border ${
-                    isActive
-                      ? 'bg-theme-accent/15 border-theme-accent/50 text-theme-accent font-semibold shadow-[0_0_20px_var(--color-glow)]'
-                      : 'border-transparent text-theme-text hover:bg-theme-surfaceHover hover:border-theme-border/70'
+                  className={`hover:text-theme-accent underline transition-colors ${
+                    activeTab === item.id ? 'text-theme-accent font-bold' : ''
                   }`}
                 >
-                  <div
-                    className={`mt-0.5 p-2 rounded-xl transition-colors ${
-                      isActive
-                        ? 'bg-theme-accent text-theme-bg'
-                        : 'bg-theme-surfaceHover text-theme-muted group-hover:text-theme-text'
-                    }`}
-                  >
-                    <Icon className="w-4 h-4" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">{item.label}</span>
-                      {item.badge && (
-                        <span
-                          className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md ${
-                            isActive
-                              ? 'bg-theme-accent text-theme-bg'
-                              : 'bg-theme-surfaceHover text-theme-muted border border-theme-border'
-                          }`}
-                        >
-                          {item.badge}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-theme-muted truncate mt-0.5">
-                      {item.description}
-                    </p>
-                  </div>
+                  {item.label}
                 </button>
-              );
-            })}
-          </nav>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Bottom Section: Created by VIK-V-VKS (sharp & rythamic) */}
-        <div className="pt-6 border-t border-theme-border">
+        <div className="pt-6 border-t border-theme-border mt-6">
           <div className="p-4 rounded-2xl bg-theme-bg/60 border border-theme-border/60 relative">
             <div className="flex items-center gap-2 mb-2 text-xs font-mono font-medium text-theme-muted">
               <Sparkles className="w-3.5 h-3.5 text-theme-accent" />
@@ -190,7 +302,6 @@ export default function Sidebar({ isOpen, onClose, activeTab, onSelectTab }) {
                         <div className="text-[10px] text-theme-muted">
                           {item.role}
                         </div>
-                        {/* Little triangle arrow pointing down */}
                         <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-theme-surface" />
                       </div>
                     )}
